@@ -39,12 +39,34 @@ export function mdToHtml(md) {
 
 async function sendLong(ctx, text) {
   const s = String(text || '…');
+  // в группе отвечаем реплаем — видно, на что именно
+  const reply = ctx.chat.type !== 'private' && ctx.message ? { reply_parameters: { message_id: ctx.message.message_id, allow_sending_without_reply: true } } : {};
   for (let i = 0; i < s.length; i += 3500) {
     const part = s.slice(i, i + 3500);
-    await ctx.api.sendMessage(ctx.chat.id, mdToHtml(part), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
-      .catch(() => ctx.api.sendMessage(ctx.chat.id, part));
+    await ctx.api.sendMessage(ctx.chat.id, mdToHtml(part), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...(i ? {} : reply) })
+      .catch(() => ctx.api.sendMessage(ctx.chat.id, part, i ? {} : reply));
   }
 }
+
+// ---------- группы: слушаем только обращения к себе ----------
+const NAME = /(?<![\p{L}\d])(мирик\p{L}*|mirik\p{L}*)(?![\p{L}\d])/iu;
+
+function addressed(ctx, owner) {
+  const m = ctx.message;
+  if (!m) return true; // нажатия кнопок под нашими же сообщениями
+  const text = m.text || m.caption || '';
+  if (NAME.test(text)) return true;
+  const at = '@' + (ctx.me.username || '').toLowerCase();
+  for (const e of m.entities || m.caption_entities || []) {
+    const chunk = text.slice(e.offset, e.offset + e.length).toLowerCase();
+    if (e.type === 'mention' && chunk === at) return true;
+    if (e.type === 'text_mention' && e.user?.id === ctx.me.id) return true;
+    if (e.type === 'bot_command' && (chunk.endsWith(at) || (owner && !chunk.includes('@')))) return true;
+  }
+  return owner && m.reply_to_message?.from?.id === ctx.me.id;
+}
+
+const refused = new Set(); // чужим в личке отвечаем один раз, без спама
 
 // io-объект для агентов: как им писать в этот чат
 function chatIO(api, chatId) {
@@ -168,13 +190,23 @@ export function startBot() {
   // Доступ только владельцу. Если OWNER_IDS пуст — владельцем становится первый написавший.
   bot.use(async (ctx, next) => {
     const id = ctx.from?.id;
-    if (!id) return;
-    if (!config.ownerIds.length && !store.owners.length) {
+    if (!id || ctx.from.is_bot) return; // с другими ботами общаемся по прямому каналу, не в группе
+    const group = ctx.chat && ctx.chat.type !== 'private';
+    // владельцем можно стать только в личке — не первым встречным из группы
+    if (!group && !config.ownerIds.length && !store.owners.length) {
       store.owners.push(id);
       save();
       await ctx.reply('👑 Ты теперь мой владелец. Привет, босс!');
     }
-    if (!isOwner(id)) return ctx.reply('Я работаю только на своего босса 🙂');
+    const owner = isOwner(id);
+    if (group) {
+      if (!owner || !addressed(ctx, owner)) return; // в группе молчим, пока босс не позовёт
+      return next();
+    }
+    if (!owner) {
+      if (!refused.has(id)) { refused.add(id); await ctx.reply('Я работаю только на своего босса 🙂'); }
+      return;
+    }
     return next();
   });
 
