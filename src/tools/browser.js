@@ -2,7 +2,8 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { config } from '../config.js';
-import { store } from '../store.js';
+import { getSecret, secretNames } from '../secrets.js';
+import { wsPath } from './files.js';
 import { htmlToText } from './web.js';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -33,9 +34,8 @@ async function getPage(ctx) {
   const context = await browser.newContext({ acceptDownloads: true, locale: 'ru-RU', userAgent: UA, viewport: { width: 1280, height: 860 } });
   page = await context.newPage();
   page.on('download', async (d) => {
-    const dir = path.join(config.workspaceDir, 'downloads');
-    await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, d.suggestedFilename());
+    await fs.mkdir(wsPath('downloads'), { recursive: true });
+    const file = wsPath(path.join('downloads', path.basename(d.suggestedFilename())));
     await d.saveAs(file);
     ctx.notify?.(`📥 Скачан файл: downloads/${d.suggestedFilename()}`);
   });
@@ -161,7 +161,7 @@ export const browserTools = [
       required: ['id', 'secret'],
     },
     async run({ id, secret, submit }, ctx) {
-      const value = store.secrets[secret];
+      const value = getSecret(secret);
       if (value == null) return `Секрета "${secret}" нет. Попроси пользователя: /secret ${secret} значение`;
       const page = await getPage(ctx);
       await el(page, id).fill(value, { timeout: 15000 });
@@ -187,10 +187,9 @@ export const browserTools = [
       const type = res.headers()['content-type'] || '';
       if (type.includes('text/html')) return 'По ссылке открывается страница, а не файл. Открой её browser_open и найди ссылку на сам файл.';
       const name = fileNameFrom(res, url);
-      const dir = path.join(config.workspaceDir, 'downloads');
-      await fs.mkdir(dir, { recursive: true });
+      await fs.mkdir(wsPath('downloads'), { recursive: true });
       const body = await res.body();
-      await fs.writeFile(path.join(dir, name), body);
+      await fs.writeFile(wsPath(path.join('downloads', name)), body);
       return `Скачано: downloads/${name} (${Math.round(body.length / 1024)} КБ, ${type.split(';')[0]})`;
     },
   },
@@ -199,7 +198,7 @@ export const browserTools = [
     description: 'Список имён сохранённых секретов (без значений).',
     parameters: { type: 'object', properties: {} },
     async run() {
-      const names = Object.keys(store.secrets);
+      const names = secretNames();
       return names.length ? names.join(', ') : 'Секретов нет';
     },
   },
@@ -220,8 +219,7 @@ export const browserTools = [
     parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
     async run({ path: p }, ctx) {
       const page = await getPage(ctx);
-      const full = path.resolve(config.workspaceDir, p);
-      if (!full.startsWith(config.workspaceDir)) throw new Error('Путь вне рабочей папки');
+      const full = wsPath(p);
       await fs.mkdir(path.dirname(full), { recursive: true });
       await fs.writeFile(full, htmlToText(await page.content()));
       return `Сохранено в ${p}`;

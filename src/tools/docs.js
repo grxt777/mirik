@@ -5,12 +5,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { wsPath } from './files.js';
 import { htmlToPdf } from './browser.js';
+import { sandboxSpawn } from '../sandbox.js';
 
 const HELPER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'doctool.py');
 
 function py(args, input = '') {
   return new Promise((resolve) => {
-    const child = spawn('python3', [HELPER, ...args]);
+    const child = spawn('python3', [HELPER, ...args], sandboxSpawn()); // чужие PDF разбираем без прав
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (out += d));

@@ -2,17 +2,35 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import fsSync from 'node:fs';
 import { config } from '../config.js';
+import { sandboxSpawn } from '../sandbox.js';
 
+const inside = (root, p) => { const rel = path.relative(root, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
+
+// Путь строго внутри рабочей папки — с учётом символических ссылок: агент может создать ссылку
+// на чужой файл, а читает/пишет её уже сам Мирик (с правами root).
 export function wsPath(p = '.') {
-  const full = path.resolve(config.workspaceDir, p.replace(/^\/+/, ''));
-  if (!full.startsWith(config.workspaceDir)) throw new Error('Путь вне рабочей папки');
+  const root = fsSync.realpathSync(config.workspaceDir);
+  const full = path.resolve(root, String(p).replace(/^\/+/, ''));
+  if (!inside(root, full)) throw new Error('Путь вне рабочей папки');
+  let probe = full;
+  while (!fsSync.existsSync(probe) && probe !== root) probe = path.dirname(probe);
+  if (!inside(root, fsSync.realpathSync(probe))) throw new Error('Путь ведёт вне рабочей папки');
+  let st = null;
+  try { st = fsSync.lstatSync(full); } catch {}
+  if (st?.isSymbolicLink()) {
+    let real;
+    try { real = fsSync.realpathSync(full); } catch { throw new Error('Битая ссылка — не трогаю'); }
+    if (!inside(root, real)) throw new Error('Ссылка ведёт вне рабочей папки');
+  }
   return full;
 }
 
 function exec(cmd, args, input, timeoutMs = 60000) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd: config.workspaceDir, env: { ...process.env, OPENROUTER_API_KEY: '', TELEGRAM_BOT_TOKEN: '', ADMIN_PASSWORD: '' } });
+    // от пользователя sandbox и с чистым окружением: ни секретов, ни ключей, ни db.json
+    const child = spawn(cmd, args, { cwd: config.workspaceDir, ...sandboxSpawn() });
     let out = '';
     const add = (d) => { if (out.length < 20000) out += d; };
     child.stdout.on('data', add);

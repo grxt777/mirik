@@ -9,6 +9,7 @@ import { AGENTS, AGENT_LIST } from './agents/registry.js';
 import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
 import { wsPath } from './tools/files.js';
 import { usageReport } from './billing.js';
+import { setSecret, deleteSecret, secretNames } from './secrets.js';
 
 export let bot = null;
 
@@ -264,17 +265,15 @@ export function startBot() {
     const [name, ...rest] = ctx.match.trim().split(/\s+/);
     await ctx.deleteMessage().catch(() => {});
     if (!name || !rest.length) return ctx.reply('Формат: /secret имя значение\nНапр.: /secret school_login ivanov\nСообщение с паролем я сразу удаляю.');
-    store.secrets[name] = rest.join(' ');
-    save();
+    setSecret(name, rest.join(' '));
     return ctx.reply(`🔐 Секрет «${name}» сохранён. Агенты вводят его в формы, но не видят значение.`);
   });
   bot.command('secrets', (ctx) => {
-    const names = Object.keys(store.secrets);
+    const names = secretNames();
     return ctx.reply(names.length ? '🔐 Секреты: ' + names.join(', ') + '\n\nУдалить: /delsecret имя' : 'Секретов нет. Добавить: /secret имя значение');
   });
   bot.command('delsecret', (ctx) => {
-    delete store.secrets[ctx.match.trim()];
-    save();
+    deleteSecret(ctx.match.trim());
     return ctx.reply('Удалено');
   });
 

@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { store, save } from './store.js';
+import { secretValues, secretNames } from './secrets.js';
 
 // ---------- секреты не должны оседать в истории ----------
 export function scrub(text) {
   let s = String(text ?? '');
-  for (const v of Object.values(store.secrets)) if (typeof v === 'string' && v.length >= 4) s = s.split(v).join('[секрет]');
+  for (const v of secretValues()) if (typeof v === 'string' && v.length >= 4) s = s.split(v).join('[секрет]');
   return s;
 }
 
@@ -112,7 +113,7 @@ export function officeState(agentState, AGENTS, currentTaskId) {
   }
   const files = recentFiles();
   if (files.length) lines.push('Свежие файлы в рабочей папке: ' + files.map((f) => f.p).join(', '));
-  const secrets = Object.keys(store.secrets);
+  const secrets = secretNames();
   lines.push(`Доступы (секреты): ${secrets.length ? secrets.join(', ') : 'нет'}.${secrets.includes('eclass_pass') ? ' Доступ к e-class ЕСТЬ — Боря может входить.' : ' Доступа к e-class нет.'}`);
   if (busy.length) lines.push('Если владелец спрашивает «как там/какой этап» — отвечай по этим данным, НЕ запускай задачу заново.');
   return lines.join('\n');

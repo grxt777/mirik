@@ -10,7 +10,6 @@ const defaults = {
   tasks: [],      // { id, text, agent, status, source, chatId, createdAt, finishedAt, result, steps[] }
   memory: [],     // долгосрочные факты { id, text, createdAt }
   chats: {},      // chatId -> история диалога с Мириком
-  secrets: {},    // name -> value (логины/пароли для браузерного агента, в LLM не попадают)
   owners: [],     // telegram user id
   stats: { tokens: 0, cost: 0, tasksDone: 0 },
 };
@@ -24,7 +23,7 @@ let timer = null;
 export function save() {
   clearTimeout(timer);
   timer = setTimeout(() => {
-    fs.writeFileSync(file + '.tmp', JSON.stringify(db, null, 1));
+    fs.writeFileSync(file + '.tmp', JSON.stringify(db, null, 1), { mode: 0o600 });
     fs.renameSync(file + '.tmp', file);
   }, 300);
 }

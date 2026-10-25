@@ -12,6 +12,7 @@ import { AGENT_LIST } from './agents/registry.js';
 import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
 import { bot, ownerChats, homeChat } from './bot.js';
 import { usageReport, watchBalance } from './billing.js';
+import { setSecret } from './secrets.js';
 
 const SESSION = crypto.createHash('sha256').update('mirik:' + config.adminPassword + ':' + config.botToken).digest('hex');
 const authed = (token) => typeof token === 'string' && token.length === SESSION.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(SESSION));
@@ -80,8 +81,7 @@ export function startServer() {
     const secrets = req.body?.secrets || {};
     const names = Object.keys(secrets).filter((k) => /^[a-z0-9_]{1,40}$/.test(k) && typeof secrets[k] === 'string' && secrets[k]);
     if (!names.length) return res.status(400).json({ error: 'нет секретов' });
-    for (const k of names) store.secrets[k] = secrets[k];
-    save();
+    for (const k of names) setSecret(k, secrets[k]);
     const from = String(req.body?.from || 'Саня').slice(0, 40);
     ownerIO(ownerChats()[0]).notify?.(`🔐 ${from} передал доступ: ${names.join(', ')}. Боря сможет заходить на сайт сам.`);
     res.json({ ok: true, saved: names });
