@@ -76,6 +76,8 @@ export const fileTools = [
     async run({ path: p, caption }, ctx) {
       const full = wsPath(p);
       await fs.access(full);
+      // по поручению Мирика файлы отдаёт он сам — иначе в чат придёт несколько копий
+      if (ctx.depth > 0) return `Не отправляю: итоговый файл отправит Мирик. Укажи в отчёте путь ${p}.`;
       await ctx.sendFile?.(full, caption);
       return 'Файл отправлен пользователю';
     },

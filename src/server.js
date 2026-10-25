@@ -6,7 +6,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { InputFile } from 'grammy';
 import { config } from './config.js';
-import { store } from './store.js';
+import { store, save } from './store.js';
 import { bus, recentLogs } from './bus.js';
 import { AGENT_LIST } from './agents/registry.js';
 import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
@@ -66,11 +66,30 @@ export function startServer() {
     res.status(401).json({ error: 'Неверный пароль' });
   });
 
-  // Канал с Саней: он присылает задания Мирику. Отдельный токен, админская сессия ему не нужна.
-  app.post('/link/ask', async (req, res) => {
+  // Канал с Саней: отдельный токен, админская сессия ему не нужна.
+  const linkAuthed = (req) => {
     const got = Buffer.from(String(req.headers.authorization || '').replace(/^Bearer /, ''));
     const want = Buffer.from(config.linkToken);
-    if (!config.linkToken || got.length !== want.length || !crypto.timingSafeEqual(got, want)) return res.status(401).json({ error: 'auth' });
+    return !!config.linkToken && got.length === want.length && crypto.timingSafeEqual(got, want);
+  };
+
+  // Саня передаёт доступы (например, логин/пароль e-class при /eclass_login). Значения в LLM не попадают:
+  // агенты вводят их в формы через browser_fill_secret по имени.
+  app.post('/link/secrets', (req, res) => {
+    if (!linkAuthed(req)) return res.status(401).json({ error: 'auth' });
+    const secrets = req.body?.secrets || {};
+    const names = Object.keys(secrets).filter((k) => /^[a-z0-9_]{1,40}$/.test(k) && typeof secrets[k] === 'string' && secrets[k]);
+    if (!names.length) return res.status(400).json({ error: 'нет секретов' });
+    for (const k of names) store.secrets[k] = secrets[k];
+    save();
+    const from = String(req.body?.from || 'Саня').slice(0, 40);
+    ownerIO().notify?.(`🔐 ${from} передал доступ: ${names.join(', ')}. Боря сможет заходить на сайт сам.`);
+    res.json({ ok: true, saved: names });
+  });
+
+  // Саня присылает задания Мирику
+  app.post('/link/ask', async (req, res) => {
+    if (!linkAuthed(req)) return res.status(401).json({ error: 'auth' });
     const text = String(req.body?.text || '').trim();
     const from = String(req.body?.from || 'Саня').slice(0, 40);
     if (!text) return res.status(400).json({ error: 'Пустое задание' });

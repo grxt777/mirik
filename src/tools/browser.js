@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { store } from '../store.js';
 import { htmlToText } from './web.js';
 
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 let browserPromise = null;
 const pages = new Map(); // taskId -> page
 
@@ -22,7 +23,7 @@ async function getPage(ctx) {
   let page = pages.get(ctx.taskId);
   if (page && !page.isClosed()) return page;
   const browser = await getBrowser();
-  const context = await browser.newContext({ acceptDownloads: true, locale: 'ru-RU', viewport: { width: 1280, height: 860 } });
+  const context = await browser.newContext({ acceptDownloads: true, locale: 'ru-RU', userAgent: UA, viewport: { width: 1280, height: 860 } });
   page = await context.newPage();
   page.on('download', async (d) => {
     const dir = path.join(config.workspaceDir, 'downloads');
@@ -64,6 +65,30 @@ async function snapshot(page) {
 
 const el = (page, id) => page.locator(`[data-mirik="${id}"]`).first();
 
+// PDF из HTML (для make_document) — тем же Chromium
+export async function htmlToPdf(html, file) {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(html, { waitUntil: 'load' });
+    await page.pdf({ path: file, format: 'A4', margin: { top: '18mm', bottom: '18mm', left: '20mm', right: '16mm' }, printBackground: true });
+  } finally {
+    await page.close();
+  }
+}
+
+function fileNameFrom(res, url) {
+  const cd = res.headers()['content-disposition'] || '';
+  const star = cd.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+  const plain = cd.match(/filename="?([^";]+)"?/i);
+  let name = star ? decodeURIComponent(star[1].replace(/"/g, '')) : plain ? plain[1] : '';
+  if (!name) { try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || ''); } catch {} }
+  name = (name || 'file').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
+  const type = res.headers()['content-type'] || '';
+  if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += type.includes('pdf') ? '.pdf' : type.includes('word') ? '.docx' : '';
+  return name;
+}
+
 export const browserTools = [
   {
     name: 'browser_open',
@@ -71,7 +96,12 @@ export const browserTools = [
     parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
     async run({ url }, ctx) {
       const page = await getPage(ctx);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      } catch (e) {
+        if (/Download is starting/i.test(e.message)) return 'По этой ссылке скачивается файл — он сохранится в downloads/. Проверь list_files("downloads").';
+        throw e;
+      }
       await page.waitForTimeout(1200);
       return snapshot(page);
     },
@@ -134,6 +164,27 @@ export const browserTools = [
         return snapshot(page);
       }
       return 'Секрет введён';
+    },
+  },
+  {
+    name: 'browser_download',
+    description: 'Скачать файл (PDF, DOCX и т.п.) со страницы с сохранением входа: по номеру ссылки id из снимка или по url. Файл ляжет в downloads/.',
+    parameters: { type: 'object', properties: { id: { type: 'integer' }, url: { type: 'string' } } },
+    async run({ id, url }, ctx) {
+      const page = await getPage(ctx);
+      if (id != null) url = await el(page, id).evaluate((a) => a.href || a.getAttribute('href') || a.closest('a')?.href || '');
+      if (!url) return 'Нет ссылки: укажи id ссылки или url';
+      url = new URL(url, page.url()).href;
+      const res = await page.context().request.get(url, { timeout: 60000 });
+      if (!res.ok()) return `Не скачалось: HTTP ${res.status()}`;
+      const type = res.headers()['content-type'] || '';
+      if (type.includes('text/html')) return 'По ссылке открывается страница, а не файл. Открой её browser_open и найди ссылку на сам файл.';
+      const name = fileNameFrom(res, url);
+      const dir = path.join(config.workspaceDir, 'downloads');
+      await fs.mkdir(dir, { recursive: true });
+      const body = await res.body();
+      await fs.writeFile(path.join(dir, name), body);
+      return `Скачано: downloads/${name} (${Math.round(body.length / 1024)} КБ, ${type.split(';')[0]})`;
     },
   },
   {

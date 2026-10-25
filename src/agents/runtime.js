@@ -7,6 +7,7 @@ import { store, save, addMemory, chatHistory, pushHistory } from '../store.js';
 import { webTools } from '../tools/web.js';
 import { fileTools } from '../tools/files.js';
 import { browserTools, closeTaskPage } from '../tools/browser.js';
+import { docTools } from '../tools/docs.js';
 
 // ---------- состояние агентов (для офиса) ----------
 export const agentState = Object.fromEntries(
@@ -126,7 +127,7 @@ const builtinTools = [
   },
 ];
 
-const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools].map((t) => [t.name, t]));
+const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...docTools].map((t) => [t.name, t]));
 
 const toolSchema = (t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } });
 
@@ -142,6 +143,9 @@ function activityLabel(name, args) {
     case 'browser_click': return 'кликает';
     case 'browser_type': case 'browser_fill_secret': return 'печатает в форму';
     case 'browser_screenshot': return 'делает скриншот';
+    case 'browser_download': return 'скачивает файл';
+    case 'read_document': return `читает ${short(args.path)}`;
+    case 'make_document': return `оформляет ${short(args.path)}`;
     case 'delegate': return `поручает ${AGENTS[args.agent]?.name || ''}`;
     case 'ask_sanya': return 'пишет Сане';
     case 'send_file': return 'отправляет файл';
