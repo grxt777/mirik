@@ -1,6 +1,7 @@
 // Telegram-бот Мирика.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { config } from './config.js';
 import { store, save } from './store.js';
@@ -76,11 +77,41 @@ function setHomeChat(id) {
 }
 export const homeChat = () => store.homeChat || ownerChats()[0];
 
+// Отправка файла в Telegram так, как его удобно смотреть: ролик — видео с плеером, обложка — фото,
+// звук — аудио, остальное — документом. Если Telegram не принял (формат/размер) — документом.
+const ffprobe = (file) => new Promise((resolve) => {
+  execFile('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:format=duration', '-of', 'json', file], { timeout: 15000 }, (err, out) => {
+    if (err) return resolve({});
+    try {
+      const j = JSON.parse(out);
+      resolve({ width: j.streams?.[0]?.width, height: j.streams?.[0]?.height, duration: Math.round(Number(j.format?.duration) || 0) || undefined });
+    } catch { resolve({}); }
+  });
+});
+
+export async function sendMedia(api, chatId, full, caption) {
+  const ext = path.extname(full).toLowerCase();
+  const { size } = await fs.stat(full);
+  const opts = { caption: caption?.slice(0, 1000) };
+  if (size > 50 * 1024 * 1024) {
+    // лимит Bot API на отправку — 50 МБ
+    return api.sendMessage(chatId, `📁 ${path.basename(full)} — ${(size / 1048576).toFixed(0)} МБ, это больше лимита Telegram для ботов (50 МБ). Файл лежит в рабочей папке: ${path.relative(config.workspaceDir, full)}`);
+  }
+  try {
+    if (['.mp4', '.mov', '.m4v'].includes(ext)) return await api.sendVideo(chatId, new InputFile(full), { ...opts, ...(await ffprobe(full)), supports_streaming: true });
+    if (['.png', '.jpg', '.jpeg', '.webp'].includes(ext) && size < 10 * 1024 * 1024) return await api.sendPhoto(chatId, new InputFile(full), opts);
+    if (['.mp3', '.m4a', '.ogg', '.wav'].includes(ext)) return await api.sendAudio(chatId, new InputFile(full), opts);
+  } catch (e) {
+    console.warn('[bot] не отправилось как медиа, шлю документом:', e.message);
+  }
+  return api.sendDocument(chatId, new InputFile(full), opts);
+}
+
 // io-объект для агентов: как им писать в этот чат
 function chatIO(api, chatId) {
   return {
     notify: (text) => api.sendMessage(chatId, '📣 ' + String(text).slice(0, 4000)).catch(() => {}),
-    sendFile: (full, caption) => api.sendDocument(chatId, new InputFile(full), { caption: caption?.slice(0, 1000) }),
+    sendFile: (full, caption) => sendMedia(api, chatId, full, caption),
     sendPhoto: (buf, caption) => api.sendPhoto(chatId, new InputFile(buf, 'screen.jpg'), { caption: caption?.slice(0, 1000) }),
   };
 }

@@ -10,7 +10,7 @@ import { store, save } from './store.js';
 import { bus, recentLogs } from './bus.js';
 import { AGENT_LIST, DEPARTMENTS } from './agents/registry.js';
 import { agentState, createTask, runTask, cancelTask, pauseTask, resumeTask, talkToMirik } from './agents/runtime.js';
-import { bot, ownerChats, homeChat } from './bot.js';
+import { bot, ownerChats, homeChat, sendMedia } from './bot.js';
 import { usageReport, watchBalance } from './billing.js';
 import { setSecret } from './secrets.js';
 
@@ -50,7 +50,7 @@ function ownerIO(target) {
   if (!bot || !chatId) return {};
   return {
     notify: (text) => bot.api.sendMessage(chatId, '📣 ' + text).catch(() => {}),
-    sendFile: (full, caption) => bot.api.sendDocument(chatId, new InputFile(full), { caption }),
+    sendFile: (full, caption) => sendMedia(bot.api, chatId, full, caption),
     sendPhoto: (buf, caption) => bot.api.sendPhoto(chatId, new InputFile(buf, 'screen.jpg'), { caption }),
   };
 }
