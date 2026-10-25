@@ -166,7 +166,7 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
   try {
     for (let step = 0; step < maxSteps; step++) {
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
-      const msg = await chat({ messages, tools: tools.map(toolSchema) });
+      const msg = await chat({ messages, tools: tools.map(toolSchema), agent: agentId });
       const calls = msg.tool_calls || [];
       if (!calls.length) {
         const text = (msg.content || '').trim() || 'Готово.';

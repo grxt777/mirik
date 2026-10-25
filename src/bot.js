@@ -8,6 +8,7 @@ import { bus, log } from './bus.js';
 import { AGENTS, AGENT_LIST } from './agents/registry.js';
 import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
 import { wsPath } from './tools/files.js';
+import { usageReport } from './billing.js';
 
 export let bot = null;
 
@@ -107,7 +108,7 @@ function officeKeyboard() {
   const kb = new InlineKeyboard();
   if (config.publicUrl.startsWith('https://')) kb.webApp('🏢 Открыть офис', config.publicUrl + '/');
   else kb.url('🏢 Офис', config.publicUrl + '/');
-  return kb.row().text('👥 Команда', 'team').text('📋 Задачи', 'tasks').row().text('📊 Статистика', 'stats');
+  return kb.row().text('👥 Команда', 'team').text('📋 Задачи', 'tasks').row().text('📊 Статистика', 'stats').text('💰 Баланс', 'balance');
 }
 
 function teamText() {
@@ -122,6 +123,33 @@ function tasksText() {
   const list = store.tasks.slice(-10).reverse();
   if (!list.length) return 'Заданий пока не было.';
   return '📋 Последние задания:\n\n' + list.map((t) => `${icon[t.status]} ${AGENTS[t.agent].emoji} ${t.text.slice(0, 70)}`).join('\n');
+}
+
+const money = (n) => '$' + (n >= 1 ? n.toFixed(2) : n.toFixed(4));
+const bigNum = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + ' млн' : n >= 1e3 ? Math.round(n / 1e3) + ' тыс.' : String(Math.round(n)));
+
+async function balanceText() {
+  const r = await usageReport();
+  const lines = ['💰 Бюджет OpenRouter', ''];
+  if (r.openrouter.error) lines.push('Баланс недоступен: ' + r.openrouter.error);
+  else {
+    lines.push(`Осталось: ${money(r.openrouter.balance)} из ${money(r.openrouter.totalCredits)}`);
+    if (r.estimate) {
+      lines.push(`Хватит примерно на ${bigNum(r.estimate.tokensLeft)} токенов`);
+      if (r.estimate.tasksLeft) lines.push(`≈ ${bigNum(r.estimate.tasksLeft)} заданий (в среднем ${money(r.estimate.avgTaskCost)} за задание)`);
+    }
+    lines.push(`Ключ Мирика сегодня: ${money(r.openrouter.keyUsageDaily || 0)}, за месяц: ${money(r.openrouter.keyUsageMonthly || 0)}`);
+  }
+  const today = r.mirik.daily[new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tashkent' })];
+  lines.push('', `👑 Мирик: ${bigNum(r.mirik.tokens)} токенов, ${money(r.mirik.cost)} всего`);
+  if (today) lines.push(`   сегодня: ${bigNum(today.tokens)} токенов, ${money(today.cost)}`);
+  if (r.sanya.error) lines.push('', `🤝 Саня: нет данных (${r.sanya.error})`);
+  else {
+    const total = Object.values(r.sanya.by_model).reduce((n, m) => n + m.total, 0);
+    lines.push('', `🤝 Саня (14 дней): ${bigNum(total)} токенов — Gemini и бесплатные модели, с баланса OpenRouter не списываются`);
+  }
+  if (r.price) lines.push('', `Цена ${r.model}: $${r.price.prompt.toFixed(2)} / 1 млн вход, $${r.price.completion.toFixed(2)} / 1 млн выход`);
+  return lines.join('\n');
 }
 
 function statsText() {
@@ -151,7 +179,7 @@ export function startBot() {
 
   bot.command('start', (ctx) =>
     ctx.reply(
-      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика`,
+      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
       { reply_markup: officeKeyboard() }
     )
   );
@@ -159,6 +187,8 @@ export function startBot() {
   bot.command('team', (ctx) => ctx.reply(teamText()));
   bot.command('tasks', (ctx) => ctx.reply(tasksText()));
   bot.command('stats', (ctx) => ctx.reply(statsText()));
+  bot.command('balance', async (ctx) => ctx.reply(await balanceText().catch((e) => '❌ ' + e.message)));
+  bot.callbackQuery('balance', async (ctx) => { await ctx.answerCallbackQuery(); await ctx.reply(await balanceText().catch((e) => '❌ ' + e.message)); });
   bot.callbackQuery('team', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(teamText())));
   bot.callbackQuery('tasks', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(tasksText())));
   bot.callbackQuery('stats', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(statsText())));
@@ -303,6 +333,7 @@ export function startBot() {
     { command: 'files', description: 'Рабочая папка' },
     { command: 'reset', description: 'Забыть диалог' },
     { command: 'stats', description: 'Статистика' },
+    { command: 'balance', description: 'Баланс OpenRouter и расход' },
   ]).catch(() => {});
   if (config.publicUrl.startsWith('https://')) {
     bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Офис', web_app: { url: config.publicUrl + '/' } } }).catch(() => {});

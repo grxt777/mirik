@@ -183,6 +183,48 @@ button { cursor: pointer; }
 .login-card .btn { padding: 12px; }
 .err { color: var(--red); min-height: 18px; font-size: 13px; }
 
+/* бюджет */
+.pill.money { cursor: pointer; font: inherit; color: inherit; }
+.pill.money:hover { border-color: var(--gold); }
+.pill.money[data-level="warning"] b { color: var(--orange); }
+.pill.money[data-level="critical"] b { color: var(--red); }
+.bcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.bcard h4 { margin: 0 0 10px; font-size: 14px; }
+.bcard.hero { background: linear-gradient(160deg, #2c2640, var(--panel-2)); }
+.eyebrow { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.big { font: 700 34px/1.2 var(--display); margin: 4px 0 10px; }
+.meter { height: 8px; border-radius: 99px; background: var(--panel-3); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--gold); border-radius: 99px; }
+.sub { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.lvl.good { color: var(--green); } .lvl.warning { color: var(--orange); } .lvl.critical { color: var(--red); }
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.kpis > div { background: rgba(0,0,0,.18); border-radius: 12px; padding: 10px; min-width: 0; }
+.kpis b { display: block; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpis span { font-size: 11.5px; color: var(--muted); }
+.kpis.small { margin: 0 0 12px; }
+.kpis.small b { font-size: 15px; }
+.note { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+.note.center { text-align: center; margin: 4px 0 12px; }
+.chart { position: relative; padding-bottom: 18px; }
+.chart-max { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.bars { display: flex; align-items: flex-end; gap: 2px; height: 110px; border-bottom: 1px solid var(--line); }
+.bars .b { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; position: relative; cursor: default; }
+.bars .b i { display: block; background: var(--gold); border-radius: 4px 4px 0 0; }
+.bars .b:hover i { filter: brightness(1.15); }
+.bars .b span { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10.5px; color: var(--muted); }
+.spend { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.spend img { width: 30px; height: 30px; border-radius: 10px; background: var(--panel-3); image-rendering: pixelated; flex: none; }
+.spend-main { flex: 1; min-width: 0; }
+.spend-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.spend-top span { color: var(--muted); white-space: nowrap; }
+.hbar { height: 6px; background: var(--panel-3); border-radius: 99px; margin-top: 5px; overflow: hidden; }
+.hbar i { display: block; height: 100%; background: var(--gold); border-radius: 99px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tbl th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 6px 4px; border-bottom: 1px solid rgba(255,255,255,.04); overflow-wrap: anywhere; }
+.tbl .muted { color: var(--muted); }
+.tip { position: fixed; z-index: 60; background: #0f0d16; border: 1px solid var(--line); color: var(--text); font-size: 12px; padding: 6px 9px; border-radius: 8px; pointer-events: none; white-space: nowrap; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+
 #toasts { position: fixed; right: 16px; top: 68px; display: flex; flex-direction: column; gap: 8px; z-index: 40; pointer-events: none; }
 .toast { background: var(--panel-2); border: 1px solid var(--line); border-left: 4px solid var(--green); border-radius: 12px; padding: 10px 14px; max-width: 340px; box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: in .25s ease-out; font-size: 13px; }
 .toast.err { border-left-color: var(--red); }
@@ -225,6 +267,8 @@ button { cursor: pointer; }
   .card .actions .btn span { display: none; }
   .card .x { top: 50%; transform: translateY(-50%); right: 6px; }
   .tabs { padding: 6px; }
+  .tabs button { font-size: 12px; padding: 8px 2px; }
+  .pill.money .lbl { display: none; }
   .view { padding: 10px; }
   .bubble { max-width: 92%; }
   #toasts { left: 12px; right: 12px; top: 60px; }

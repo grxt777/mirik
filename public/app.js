@@ -72,6 +72,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
     await login({ password: $('#password').value });
     $('#login').classList.add('hidden');
     connect();
+    loadUsage();
   } catch (err) {
     $('#loginErr').textContent = err.message;
   }
@@ -153,10 +154,7 @@ function renderStats() {
   office.done = list.filter((t) => t.status === 'done').length;
   $('#sRunning').textContent = office.running;
   $('#pRunning').classList.toggle('active', office.running > 0);
-  if (state.stats) {
-    $('#sDone').textContent = Math.max(state.stats.tasksDone, office.done);
-    $('#sCost').textContent = '$' + state.stats.cost.toFixed(3);
-  }
+  if (state.stats) $('#sDone').textContent = Math.max(state.stats.tasksDone, office.done);
 }
 
 const statusColor = (s) => ({ thinking: '#f1c40f', working: '#2ecc71', managing: '#ff9f43' })[s] || '#7d7896';
@@ -327,7 +325,8 @@ function switchTab(tab) {
   document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('hidden', v.id !== 'v-' + tab));
   if (tab === 'feed') $('#feedDot').classList.add('hidden');
-  $('#composer').classList.toggle('hidden', tab === 'feed');
+  if (tab === 'budget') loadUsage();
+  $('#composer').classList.toggle('hidden', tab === 'feed' || tab === 'budget');
 }
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
@@ -362,6 +361,135 @@ $('#composer').addEventListener('submit', async (e) => {
   await send(text, state.to);
 });
 
+// ---------- бюджет ----------
+const money = (n) => (n == null ? '—' : '$' + (Math.abs(n) >= 1 ? n.toFixed(2) : n >= 0.01 ? n.toFixed(3) : n.toFixed(4)));
+const bigNum = (n) => (n == null ? '—' : n >= 1e9 ? (n / 1e9).toFixed(1) + ' млрд' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' млн' : n >= 1e3 ? Math.round(n / 1e3) + ' тыс.' : String(Math.round(n)));
+const todayKey = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tashkent' });
+
+async function loadUsage() {
+  try {
+    const r = await api('/api/usage');
+    state.usage = r;
+    renderBalancePill();
+    if (!$('#v-budget').classList.contains('hidden')) renderBudget();
+  } catch (e) {
+    if (e.message !== 'auth') $('#v-budget').innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`;
+  }
+}
+
+function balanceLevel(b) { return b < 1 ? 'critical' : b < 3 ? 'warning' : 'good'; }
+
+function renderBalancePill() {
+  const or = state.usage?.openrouter;
+  if (!or || or.error) return;
+  $('#sBalance').textContent = money(or.balance);
+  $('#pBalance').dataset.level = balanceLevel(or.balance);
+}
+
+function lastDays(n) {
+  const out = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400000);
+    out.push(d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tashkent' }));
+  }
+  return out;
+}
+
+function barsHTML(points, fmt) {
+  const max = Math.max(...points.map((p) => p.v), 0);
+  const bars = points.map((p, i) => {
+    const h = max > 0 ? Math.max(p.v > 0 ? 3 : 0, (p.v / max) * 100) : 0;
+    const label = i % 3 === (points.length - 1) % 3 ? p.label : '';
+    return `<div class="b" data-tip="${esc(p.tip)}"><i style="height:${h}%"></i><span>${label}</span></div>`;
+  }).join('');
+  return `<div class="chart"><div class="chart-max">${max > 0 ? 'макс. ' + fmt(max) : 'пока нет данных'}</div><div class="bars">${bars}</div></div>`;
+}
+
+function renderBudget() {
+  const r = state.usage;
+  if (!r) return;
+  const or = r.openrouter, est = r.estimate, m = r.mirik;
+  const parts = [];
+  if (or.error) parts.push(`<section class="bcard"><h4>Баланс OpenRouter</h4><div class="empty">Недоступен: ${esc(or.error)}</div></section>`);
+  else {
+    const usedPct = or.totalCredits > 0 ? Math.min(100, (or.totalUsage / or.totalCredits) * 100) : 0;
+    const lvl = balanceLevel(or.balance);
+    const lvlText = { good: '✓ всё в порядке', warning: '⚠ скоро закончится', critical: '⛔ почти пусто — пополни' }[lvl];
+    parts.push(`<section class="bcard hero">
+      <div class="eyebrow">Баланс OpenRouter</div>
+      <div class="big">${money(or.balance)}</div>
+      <div class="meter"><i style="width:${usedPct.toFixed(1)}%"></i></div>
+      <div class="sub">потрачено ${money(or.totalUsage)} из ${money(or.totalCredits)} · <span class="lvl ${lvl}">${lvlText}</span></div>
+      <div class="kpis">
+        <div><b>≈ ${bigNum(est?.tokensLeft)}</b><span>токенов хватит</span></div>
+        <div><b>${est?.tasksLeft ? '≈ ' + bigNum(est.tasksLeft) : '—'}</b><span>заданий хватит</span></div>
+        <div><b>${money(est?.avgTaskCost)}</b><span>среднее задание</span></div>
+      </div>
+      ${or.keyLimit != null ? `<div class="note">У ключа Мирика свой лимит: осталось ${money(or.keyRemaining)} из ${money(or.keyLimit)}. Сегодня по ключу ${money(or.keyUsageDaily)}, за месяц ${money(or.keyUsageMonthly)}.</div>` : ''}
+    </section>`);
+  }
+  const days = lastDays(14);
+  const today = m.daily[todayKey()] || {};
+  parts.push(`<section class="bcard">
+    <h4>👑 Мирик — расход по дням</h4>
+    <div class="kpis small">
+      <div><b>${money(today.cost || 0)}</b><span>сегодня</span></div>
+      <div><b>${bigNum(today.tokens || 0)}</b><span>токенов сегодня</span></div>
+      <div><b>${money(m.cost)}</b><span>всего</span></div>
+    </div>
+    ${barsHTML(days.map((d) => {
+      const x = m.daily[d] || {};
+      const dd = new Date(d + 'T12:00:00');
+      return { v: x.cost || 0, label: dd.getDate(), tip: `${dd.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}: ${money(x.cost || 0)} · ${bigNum(x.tokens || 0)} токенов · ${x.calls || 0} запросов` };
+    }), money)}
+    <div class="note">Всего ${bigNum(m.tokens)} токенов. Входные (агенты читают страницы и контекст): ${bigNum(m.prompt)}, выходные: ${bigNum(m.completion)}${m.prompt + m.completion < m.tokens * 0.95 ? ' — разбивка на вход/выход ведётся с 25 октября' : ''}.</div>
+  </section>`);
+  const agents = Object.values(state.agents);
+  const maxCost = Math.max(...agents.map((a) => m.byAgent[a.id]?.cost || 0), 0);
+  parts.push(`<section class="bcard"><h4>Кто сколько тратит</h4>
+    ${agents.map((a) => {
+      const x = m.byAgent[a.id] || {};
+      const w = maxCost > 0 ? ((x.cost || 0) / maxCost) * 100 : 0;
+      return `<div class="spend"><img src="${avatarURL(a.id, a.look)}" alt=""><div class="spend-main"><div class="spend-top"><b>${esc(a.name)}</b><span>${money(x.cost || 0)} · ${bigNum(x.tokens || 0)} ток.</span></div><div class="hbar"><i style="width:${w}%"></i></div></div></div>`;
+    }).join('')}
+    ${Object.keys(m.byAgent).length ? '' : '<div class="note">Разбивка по агентам начнёт копиться с новых заданий.</div>'}
+  </section>`);
+  const s = r.sanya;
+  if (s.error) parts.push(`<section class="bcard"><h4>🤝 Саня</h4><div class="note">Нет данных: ${esc(s.error)}</div></section>`);
+  else {
+    const models = Object.entries(s.by_model).sort((a, b) => b[1].total - a[1].total);
+    const total = models.reduce((n, [, x]) => n + x.total, 0);
+    const todayS = s.by_day[todayKey()] || 0;
+    parts.push(`<section class="bcard"><h4>🤝 Саня — 14 дней</h4>
+      <div class="kpis small"><div><b>${bigNum(todayS)}</b><span>токенов сегодня</span></div><div><b>${bigNum(total)}</b><span>за 14 дней</span></div><div><b>$0</b><span>с OpenRouter</span></div></div>
+      <table class="tbl"><thead><tr><th>Модель</th><th>Запросов</th><th>Токенов</th><th></th></tr></thead><tbody>
+      ${models.map(([name, x]) => `<tr><td>${esc(name)}</td><td>${x.calls}</td><td>${bigNum(x.total)}</td><td class="muted">${name.includes('/') ? (name.endsWith(':free') ? 'бесплатно' : 'OpenRouter') : 'Google Gemini'}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Пока пусто</td></tr>'}
+      </tbody></table>
+      <div class="note">Саня работает на Gemini от Google и бесплатных моделях — баланс OpenRouter он не тратит.</div>
+    </section>`);
+  }
+  if (r.price) parts.push(`<div class="note center">Цена ${esc(r.model)}: $${r.price.prompt.toFixed(2)} за 1 млн входных и $${r.price.completion.toFixed(2)} за 1 млн выходных токенов · обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>`);
+  $('#v-budget').innerHTML = parts.join('');
+}
+
+// подсказка над столбиками
+const tip = document.createElement('div');
+tip.className = 'tip hidden';
+document.body.append(tip);
+$('#v-budget').addEventListener('pointerover', (e) => {
+  const b = e.target.closest('[data-tip]');
+  if (!b) return tip.classList.add('hidden');
+  tip.textContent = b.dataset.tip;
+  tip.classList.remove('hidden');
+  const r = b.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+  tip.style.top = r.top - tip.offsetHeight - 8 + 'px';
+});
+$('#v-budget').addEventListener('pointerleave', () => tip.classList.add('hidden'));
+$('#pBalance').addEventListener('click', () => { switchTab('budget'); $('#app').classList.remove('expanded'); });
+setInterval(loadUsage, 60000);
+
 // ---------- офис: кнопки ----------
 document.querySelector('.world-tools').addEventListener('click', (e) => {
   const z = e.target.closest('[data-z]')?.dataset.z;
@@ -393,4 +521,5 @@ setInterval(async () => {
   }
   if (!token) return showLogin();
   connect();
+  loadUsage();
 })();

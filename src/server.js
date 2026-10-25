@@ -11,6 +11,7 @@ import { bus, recentLogs } from './bus.js';
 import { AGENT_LIST } from './agents/registry.js';
 import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
 import { bot, ownerChats } from './bot.js';
+import { usageReport, watchBalance } from './billing.js';
 
 const SESSION = crypto.createHash('sha256').update('mirik:' + config.adminPassword + ':' + config.botToken).digest('hex');
 const authed = (token) => typeof token === 'string' && token.length === SESSION.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(SESSION));
@@ -111,6 +112,8 @@ export function startServer() {
     res.json({ task: publicTask(task) });
   });
 
+  app.get('/api/usage', async (_, res) => res.json(await usageReport()));
+
   app.post('/api/tasks/:id/cancel', (req, res) => res.json({ ok: cancelTask(req.params.id) }));
 
   const server = http.createServer(app);
@@ -124,6 +127,8 @@ export function startServer() {
     const msg = JSON.stringify(e.type === 'task' ? { ...e, task: publicTask(e.task) } : e);
     for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
   });
+
+  watchBalance((text) => ownerIO().notify?.(text) ?? Promise.resolve());
 
   server.listen(config.port, () => console.log(`[office] http://localhost:${config.port}`));
 }
