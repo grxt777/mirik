@@ -18,7 +18,7 @@ const TASK_TOKEN_BUDGET = 400_000;
 const KEEP_FULL_RESULTS = 2;
 
 // Задачи, прерванные перезапуском сервера, не должны висеть «в работе»
-for (const t of store.tasks) if (t.status === 'running' || t.status === 'queued') {
+for (const t of store.tasks) if (t.status === 'running' || t.status === 'queued' || t.status === 'paused') {
   t.status = 'interrupted';
   t.result = t.result || 'Прервано перезапуском сервера';
   t.finishedAt = t.finishedAt || Date.now();
@@ -36,7 +36,7 @@ function setState(id, patch) {
 }
 
 // ---------- задачи ----------
-const running = new Map(); // taskId -> { cancelled }
+const running = new Map(); // taskId -> { cancelled, paused, tokens }
 
 export function createTask({ text, agent = 'mirik', source = 'panel', chatId = null }) {
   const task = {
@@ -65,9 +65,44 @@ function taskStep(task, agent, text) {
 
 export function cancelTask(id) {
   const r = running.get(id);
-  if (r) r.cancelled = true;
+  if (r) { r.cancelled = true; r.paused = false; }
   return !!r;
 }
+
+// Пауза: агенты дорабатывают текущий шаг (запущенный инструмент) и замирают до «Продолжить»
+export function pauseTask(id) {
+  const r = running.get(id);
+  const task = store.tasks.find((t) => t.id === id);
+  if (!r || !task || r.paused) return false;
+  r.paused = true;
+  task.status = 'paused';
+  taskStep(task, task.agent, '⏸ Поставлено на паузу');
+  save();
+  return true;
+}
+
+export function resumeTask(id) {
+  const r = running.get(id);
+  const task = store.tasks.find((t) => t.id === id);
+  if (!r || !task || !r.paused) return false;
+  r.paused = false;
+  task.status = 'running';
+  taskStep(task, task.agent, '▶ Продолжено');
+  save();
+  return true;
+}
+
+async function waitIfPaused(ctx, agentId) {
+  if (!ctx.control?.paused) return;
+  setState(agentId, { status: 'paused', activity: '⏸ на паузе', taskId: ctx.taskId });
+  while (ctx.control.paused && !ctx.control.cancelled) await new Promise((r) => setTimeout(r, 700));
+  setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
+}
+
+// «Сейчас соберу раскадровку…» вместо работы: модель описала план и закончила ход без инструментов
+const INTENT = /(^|\s)(собираю|начинаю|приступаю|займусь|запускаю|перехожу|пишу|делаю|готовлю|сейчас\s+(сделаю|соберу|напишу|займусь|подготовлю|проверю)|далее\s+(сделаю|соберу))/i;
+const DONE_MARK = /(готово|сохранил|записал|отправил|создал|собрал|результат|итог|projects\/|\.(md|json|mp4|png|docx|pdf|py)\b)/i;
+const looksLikeIntent = (text) => text.length < 500 && INTENT.test(text) && !DONE_MARK.test(text.replace(/^✅\s*/, '').replace(/^готово[.!]?\s*/i, ''));
 
 // ---------- инструменты ----------
 const builtinTools = [
@@ -218,8 +253,11 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
   const actx = { ...ctx, agentId };
 
   setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
+  let nudges = 0, lastKey = '', repeats = 0;
   try {
     for (let step = 0; step < maxSteps; step++) {
+      if (ctx.control?.cancelled) throw new Error('Задача отменена');
+      await waitIfPaused(ctx, agentId);
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
       compact(messages);
       const over = budget.tokens > TASK_TOKEN_BUDGET;
@@ -229,9 +267,21 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
       const calls = msg.tool_calls || [];
       if (!calls.length) {
         const text = (msg.content || '').trim() || 'Готово.';
+        // описал намерение вместо работы — возвращаем к делу (максимум дважды)
+        if (looksLikeIntent(text) && nudges < 2 && step < maxSteps - 2 && !over) {
+          nudges++;
+          messages.push({ role: 'assistant', content: text });
+          messages.push({ role: 'user', content: 'Ты описал, что собираешься сделать, но не сделал. Выполни это прямо сейчас инструментами (без «сейчас соберу/начинаю»), и только потом дай отчёт с результатом.' });
+          taskStep(ctx.task, agentId, '↩ возвращаю к делу: ' + text.slice(0, 80));
+          continue;
+        }
         taskStep(ctx.task, agentId, '✅ ' + text);
         return text;
       }
+      // одно и то же раз за разом (например, опрос папки в ожидании) — останавливаем
+      const key = calls.map((c) => c.function.name + c.function.arguments).join('|');
+      repeats = key === lastKey ? repeats + 1 : 0;
+      lastKey = key;
       messages.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
       if (msg.content) taskStep(ctx.task, agentId, '💭 ' + msg.content);
 
@@ -254,10 +304,18 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
           return { role: 'tool', tool_call_id: call.id, content: scrub(content).slice(0, 12000) };
         })
       );
+      if (repeats >= 2) {
+        results.at(-1).content += '\n\n[СИСТЕМА] Ты третий раз подряд делаешь одно и то же. Не жди и не опрашивай: сотрудники работают синхронно — если отчёт пришёл, работа закончена. Смени подход или подведи итог.';
+      }
       messages.push(...results);
       setState(agentId, { status: 'thinking', activity: 'думает…' });
     }
-    return 'Не уложился в лимит шагов. Вот что успел: ' + (messages.at(-1)?.content || '').slice(0, 1500);
+    // лимит шагов: не обрываемся на полуслове, а просим честный итог без инструментов
+    messages.push({ role: 'user', content: 'Лимит шагов исчерпан. Без инструментов коротко: что сделано (с путями файлов), что не успел и что предлагаешь сделать дальше.' });
+    const fin = await chat({ messages, tools: [], agent: agentId, maxTokens: 800 }).catch(() => null);
+    const text = (fin?.content || '').trim() || 'Не уложился в лимит шагов — работа прервана.';
+    taskStep(ctx.task, agentId, '⏹ ' + text);
+    return text;
   } finally {
     setState(agentId, { status: 'idle', activity: 'отдыхает', taskId: null });
   }

@@ -1385,7 +1385,7 @@ export class Office {
     const w = c.measureText(a.name).width + 22;
     c.fillStyle = 'rgba(18,16,28,.82)';
     c.beginPath(); c.roundRect(p.x - w / 2, y, w, 18, 9); c.fill();
-    const dot = { idle: '#8e8aa3', thinking: '#f1c40f', working: '#2ecc71', managing: '#ff9f43' }[a.status] || '#8e8aa3';
+    const dot = { idle: '#8e8aa3', thinking: '#f1c40f', working: '#2ecc71', managing: '#ff9f43', paused: '#74b9ff' }[a.status] || '#8e8aa3';
     ellipse(c, p.x - w / 2 + 9, y + 9, 3.5, 3.5, dot);
     c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle';
     c.fillText(a.name, p.x + 5, y + 9.5);

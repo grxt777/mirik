@@ -28,8 +28,8 @@
       <div class="brand"><span>👑</span><b>Мирик</b><em>HQ</em></div>
       <div class="crew" id="crew"></div>
       <div class="meta">
-        <div class="pill" id="pRunning" title="Задачи в работе"><i class="pulse"></i><b id="sRunning">0</b><span class="lbl">в работе</span></div>
-        <div class="pill hide-sm" title="Выполнено"><b id="sDone">0</b><span class="lbl">готово</span></div>
+        <button class="pill clickable" id="pRunning" data-tasks="active" title="Что в работе — управление задачами"><i class="pulse"></i><b id="sRunning">0</b><span class="lbl">в работе</span></button>
+        <button class="pill clickable hide-sm" id="pDone" data-tasks="done" title="Что готово"><b id="sDone">0</b><span class="lbl">готово</span></button>
         <button class="pill money" id="pBalance" title="Баланс OpenRouter — открыть бюджет">💰 <b id="sBalance">—</b><span class="lbl">баланс</span></button>
         <i id="connDot" class="conn" title="Нет соединения"></i>
       </div>
@@ -74,6 +74,17 @@
         </form>
       </aside>
     </main>
+  </div>
+  <div id="popShade" class="pop-shade hidden"></div>
+  <div id="tasksPop" class="taskpop hidden" role="dialog" aria-label="Задачи">
+    <div class="taskpop-head">
+      <div class="seg">
+        <button data-ptab="active">⏳ В работе <b id="popActiveN">0</b></button>
+        <button data-ptab="done">✅ Готово <b id="popDoneN">0</b></button>
+      </div>
+      <button class="x" data-popclose aria-label="Закрыть">✕</button>
+    </div>
+    <div class="taskpop-body" id="tasksPopBody"></div>
   </div>
   <div id="toasts"></div>
   <script type="module" src="app.js"></script>

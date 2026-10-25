@@ -117,6 +117,7 @@ async function renderMp4({ url, width, height, renderSize, fps, duration, audio 
     let prevSig = null, prevBuf = null, unique = 0;
     for (let i = 0; i < frames; i++) {
       if (ctx?.control?.cancelled) { ff.kill('SIGKILL'); throw new Error('Рендер отменён'); }
+      while (ctx?.control?.paused && !ctx.control.cancelled) await new Promise((r) => setTimeout(r, 700)); // пауза задачи — замираем на кадре
       const sig = await page.evaluate((t) => { window.__seek(t); return window.__dedupe ? document.getElementById('stage').innerHTML : null; }, i / fps);
       let buf;
       if (dedupe && sig === prevSig && prevBuf) buf = prevBuf;

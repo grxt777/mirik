@@ -9,7 +9,7 @@ import { config } from './config.js';
 import { store, save } from './store.js';
 import { bus, recentLogs } from './bus.js';
 import { AGENT_LIST, DEPARTMENTS } from './agents/registry.js';
-import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
+import { agentState, createTask, runTask, cancelTask, pauseTask, resumeTask, talkToMirik } from './agents/runtime.js';
 import { bot, ownerChats, homeChat } from './bot.js';
 import { usageReport, watchBalance } from './billing.js';
 import { setSecret } from './secrets.js';
@@ -58,7 +58,8 @@ function ownerIO(target) {
 export function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
-  app.use(express.static(path.resolve('public')));
+  // no-cache: браузер и Telegram каждый раз сверяются с сервером, и обновления интерфейса видны сразу
+  app.use(express.static(path.resolve('public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
   app.get('/health', (_, res) => res.send('ok'));
 
@@ -137,6 +138,8 @@ export function startServer() {
   app.get('/api/usage', async (_, res) => res.json(await usageReport()));
 
   app.post('/api/tasks/:id/cancel', (req, res) => res.json({ ok: cancelTask(req.params.id) }));
+  app.post('/api/tasks/:id/pause', (req, res) => res.json({ ok: pauseTask(req.params.id) }));
+  app.post('/api/tasks/:id/resume', (req, res) => res.json({ ok: resumeTask(req.params.id) }));
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });

@@ -7,7 +7,7 @@ import { store, save } from './store.js';
 import * as memdb from './memdb.js';
 import { bus, log } from './bus.js';
 import { AGENTS, AGENT_LIST, DEPARTMENTS } from './agents/registry.js';
-import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
+import { agentState, talkToMirik, createTask, runTask, cancelTask, pauseTask, resumeTask } from './agents/runtime.js';
 import { wsPath } from './tools/files.js';
 import { usageReport } from './billing.js';
 import { setSecret, deleteSecret, secretNames } from './secrets.js';
@@ -86,22 +86,26 @@ function chatIO(api, chatId) {
 }
 
 // Живой статус: одно сообщение, которое редактируется по ходу задачи
+// Кнопки управления задачей: пауза/продолжить и стоп
+const taskKeyboard = (task) => new InlineKeyboard()
+  .text(task.status === 'paused' ? '▶ Продолжить' : '⏸ Пауза', `${task.status === 'paused' ? 'resume' : 'pause'}:${task.id}`)
+  .text('⛔ Стоп', `stop:${task.id}`);
+
 function liveStatus(api, chatId, statusMsgId, taskRef) {
   let last = 0, timer = null, text = '';
   const render = () => {
     const task = taskRef.task;
     if (!task) return;
     const lines = task.steps.slice(-6).map((s) => `${AGENTS[s.agent]?.emoji || '•'} ${AGENTS[s.agent]?.name}: ${s.text.slice(0, 120)}`);
-    const next = `⏳ Работаем…\n\n${lines.join('\n')}`;
+    const paused = task.status === 'paused';
+    const next = `${paused ? '⏸ На паузе' : '⏳ Работаем…'}\n\n${lines.join('\n')}`;
     if (next === text) return;
     text = next;
     last = Date.now();
-    api.editMessageText(chatId, statusMsgId, next, {
-      reply_markup: new InlineKeyboard().text('⛔ Стоп', `stop:${task.id}`),
-    }).catch(() => {});
+    api.editMessageText(chatId, statusMsgId, next, { reply_markup: taskKeyboard(task) }).catch(() => {});
   };
   const onEvent = (e) => {
-    if (e.type !== 'task' || e.task.id !== taskRef.task?.id || e.task.status !== 'running') return;
+    if (e.type !== 'task' || e.task.id !== taskRef.task?.id || !['running', 'paused'].includes(e.task.status)) return;
     clearTimeout(timer);
     timer = setTimeout(render, Math.max(0, 1500 - (Date.now() - last)));
   };
@@ -151,11 +155,19 @@ function teamText() {
   }).join('\n\n') + '\n\nНапрямую: ' + AGENT_LIST.filter((a) => a.id !== 'mirik').map((a) => '/' + a.id).join(' ') + ' + задание';
 }
 
+const TASK_ICON = { queued: '🕓', running: '⏳', paused: '⏸', done: '✅', failed: '❌', cancelled: '⛔', interrupted: '⚠️' };
 function tasksText() {
-  const icon = { queued: '🕓', running: '⏳', done: '✅', failed: '❌', cancelled: '⛔' };
   const list = store.tasks.slice(-10).reverse();
   if (!list.length) return 'Заданий пока не было.';
-  return '📋 Последние задания:\n\n' + list.map((t) => `${icon[t.status]} ${AGENTS[t.agent].emoji} ${t.text.slice(0, 70)}`).join('\n');
+  return '📋 Последние задания:\n\n' + list.map((t) => `${TASK_ICON[t.status] || '•'} ${AGENTS[t.agent]?.emoji || ''} ${t.text.slice(0, 70)}`).join('\n');
+}
+
+// /tasks: список + отдельное сообщение с кнопками на каждую задачу в работе
+async function replyTasks(ctx) {
+  await ctx.reply(tasksText());
+  for (const t of store.tasks.filter((t) => t.status === 'running' || t.status === 'paused')) {
+    await ctx.reply(`${TASK_ICON[t.status]} ${t.text.slice(0, 200)}\n— ${t.steps.at(-1)?.text.slice(0, 120) || 'в работе'}`, { reply_markup: taskKeyboard(t) });
+  }
 }
 
 const money = (n) => '$' + (n >= 1 ? n.toFixed(2) : n.toFixed(4));
@@ -231,16 +243,22 @@ export function startBot() {
   );
   bot.command('office', (ctx) => ctx.reply('Офис команды 🏢', { reply_markup: officeKeyboard() }));
   bot.command('team', (ctx) => ctx.reply(teamText()));
-  bot.command('tasks', (ctx) => ctx.reply(tasksText()));
+  bot.command('tasks', replyTasks);
   bot.command('stats', (ctx) => ctx.reply(statsText()));
   bot.command('balance', async (ctx) => ctx.reply(await balanceText().catch((e) => '❌ ' + e.message)));
   bot.callbackQuery('balance', async (ctx) => { await ctx.answerCallbackQuery(); await ctx.reply(await balanceText().catch((e) => '❌ ' + e.message)); });
   bot.callbackQuery('team', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(teamText())));
-  bot.callbackQuery('tasks', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(tasksText())));
+  bot.callbackQuery('tasks', (ctx) => ctx.answerCallbackQuery().then(() => replyTasks(ctx)));
   bot.callbackQuery('stats', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(statsText())));
   bot.callbackQuery(/^stop:(.+)$/, async (ctx) => {
-    cancelTask(ctx.match[1]);
-    await ctx.answerCallbackQuery('Останавливаю…');
+    await ctx.answerCallbackQuery(cancelTask(ctx.match[1]) ? 'Останавливаю…' : 'Задача уже не выполняется');
+  });
+  bot.callbackQuery(/^(pause|resume):(.+)$/, async (ctx) => {
+    const [, action, id] = ctx.match;
+    const ok = action === 'pause' ? pauseTask(id) : resumeTask(id);
+    await ctx.answerCallbackQuery(ok ? (action === 'pause' ? '⏸ На паузе — сотрудники доделают текущий шаг и замрут' : '▶ Продолжаем') : 'Задача уже не выполняется');
+    const task = store.tasks.find((t) => t.id === id);
+    if (ok && task) await ctx.editMessageReplyMarkup({ reply_markup: taskKeyboard(task) }).catch(() => {});
   });
 
   bot.command('stop', (ctx) => {

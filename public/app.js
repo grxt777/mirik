@@ -6,7 +6,9 @@ const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
 
-const AGENT_STATUS = { idle: 'свободен', thinking: 'думает', working: 'работает', managing: 'раздаёт задачи' };
+const AGENT_STATUS = { idle: 'свободен', thinking: 'думает', working: 'работает', managing: 'раздаёт задачи', paused: 'на паузе' };
+const ACTIVE = new Set(['running', 'queued', 'paused']);
+const TASK_STATUS = { running: ['в работе', 'working'], queued: ['в очереди', 'thinking'], paused: ['на паузе', 'paused'], done: ['готово', 'done'], failed: ['ошибка', 'failed'], cancelled: ['отменено', 'cancelled'], interrupted: ['прервано', 'failed'] };
 const state = { agents: {}, departments: {}, tasks: new Map(), openSteps: new Set(), to: 'mirik', stats: null };
 const coarse = matchMedia('(pointer: coarse)').matches;
 let token = null;
@@ -136,6 +138,7 @@ function scheduleRender(what) {
   if (!pending.size) requestAnimationFrame(() => {
     if (pending.has('agents')) { renderCrew(); renderTeam(); if (office.selected) showCard(office.selected); }
     renderStats();
+    renderPopup();
     pending.clear();
   });
   pending.add(what);
@@ -152,14 +155,14 @@ function renderAll() {
 // ---------- шапка ----------
 function renderStats() {
   const list = [...state.tasks.values()];
-  office.running = list.filter((t) => t.status === 'running').length;
+  office.running = list.filter((t) => ACTIVE.has(t.status)).length;
   office.done = list.filter((t) => t.status === 'done').length;
   $('#sRunning').textContent = office.running;
   $('#pRunning').classList.toggle('active', office.running > 0);
   if (state.stats) $('#sDone').textContent = Math.max(state.stats.tasksDone, office.done);
 }
 
-const statusColor = (s) => ({ thinking: '#f1c40f', working: '#2ecc71', managing: '#ff9f43' })[s] || '#7d7896';
+const statusColor = (s) => ({ thinking: '#f1c40f', working: '#2ecc71', managing: '#ff9f43', paused: '#74b9ff' })[s] || '#7d7896';
 
 function renderCrew() {
   $('#crew').innerHTML = Object.values(state.agents).map((a) =>
@@ -221,7 +224,7 @@ function messageHTML(t) {
   const time = new Date(t.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   const src = t.source === 'telegram' ? '✈️ Telegram' : '🏢 Офис';
   const to = t.agent !== 'mirik' ? `<span>→ ${esc(a.name)}</span>` : '';
-  const running = t.status === 'running' || t.status === 'queued';
+  const running = ACTIVE.has(t.status);
   const last = t.steps.at(-1);
   const steps = t.steps.length
     ? `<details class="steps" data-steps="${t.id}" ${state.openSteps.has(t.id) ? 'open' : ''}><summary>Ход работы · ${t.steps.length}</summary><ol>${t.steps.map(stepLine).join('')}</ol></details>`
@@ -231,14 +234,101 @@ function messageHTML(t) {
     const la = last && state.agents[last.agent];
     body = `<div class="typing"><span></span><span></span><span></span></div>${last ? `<div class="live">${la?.emoji || ''} ${esc(la?.name || '')}: ${esc(plain(last.text).slice(0, 140))}</div>` : ''}`;
   } else body = `<div class="md">${md(t.result || (t.status === 'cancelled' ? 'Остановлено.' : '—'))}</div>`;
-  const status = running ? '<span class="status working">в работе</span>' : t.status === 'failed' ? '<span class="status" style="color:var(--red)">ошибка</span>' : t.status === 'cancelled' ? '<span class="status">остановлено</span>' : '';
-  const actions = running
-    ? `<div class="bubble-actions"><button class="stop" data-cancel="${t.id}">⛔ Остановить</button></div>`
-    : `<div class="bubble-actions"><button data-copy="${t.id}">📋 Копировать</button><button data-retry="${t.id}">↻ Повторить</button></div>`;
+  const [stLabel, stCls] = TASK_STATUS[t.status] || ['', ''];
+  const status = t.status !== 'done' && stLabel ? `<span class="status ${stCls}">${stLabel}</span>` : '';
+  const actions = `<div class="bubble-actions">${taskButtons(t, false)}</div>`;
   return `<div class="msg me"><div><div class="bubble">${esc(t.text)}</div><div class="meta"><span>${src}</span>${to}<span>${time}</span></div></div></div>
     <div class="msg bot"><img class="ava" src="${avatarURL(a.id, a.look)}" alt="">
       <div class="bubble ${t.status === 'failed' ? 'failed' : ''}"><div class="who">${esc(a.name)} ${status}</div>${body}${steps}${actions}</div></div>`;
 }
+
+// Кнопки управления задачей — одинаковые в чате и во всплывающем окне
+function taskButtons(t, withOpen) {
+  const open = withOpen ? `<button data-act="open" data-id="${t.id}">💬 В чат</button>` : '';
+  if (ACTIVE.has(t.status)) {
+    const pr = t.status === 'paused' ? `<button class="go" data-act="resume" data-id="${t.id}">▶ Продолжить</button>` : `<button data-act="pause" data-id="${t.id}">⏸ Пауза</button>`;
+    return `${pr}<button class="stop" data-act="cancel" data-id="${t.id}">⛔ Отменить</button>${open}`;
+  }
+  return `<button data-act="retry" data-id="${t.id}">↻ Повторить</button>${open}<button data-act="copy" data-id="${t.id}">📋 Копировать</button>`;
+}
+
+async function taskAction(act, id, btn) {
+  const t = state.tasks.get(id);
+  if (!t) return;
+  if (act === 'copy') { await navigator.clipboard?.writeText(t.result || ''); toast('Скопировано'); return; }
+  if (act === 'retry') { closePopup(); switchTab('chat'); await send(t.text, t.agent); return; }
+  if (act === 'open') { closePopup(); openInChat(id); return; }
+  if (btn) btn.disabled = true;
+  const r = await api(`/api/tasks/${id}/${act}`, {});
+  if (!r.ok) toast('Задача уже не выполняется', true);
+  else toast({ pause: '⏸ Пауза — сотрудники доделают текущий шаг и замрут', resume: '▶ Продолжаем', cancel: '⛔ Отменяю…' }[act]);
+}
+
+function openInChat(id) {
+  switchTab('chat');
+  $('#app').classList.remove('expanded');
+  const el = $(`#chat [data-task="${id}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1600);
+}
+
+// ---------- всплывающее окно «В работе / Готово» ----------
+const pop = { open: false, tab: 'active', timer: null };
+const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} с` : s < 3600 ? `${Math.floor(s / 60)} мин ${s % 60} с` : `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин`; };
+
+function popItem(t) {
+  const a = state.agents[t.agent] || {};
+  const who = [...new Set(t.steps.map((s) => s.agent))].map((id) => state.agents[id]).filter(Boolean);
+  const last = t.steps.at(-1);
+  const [stLabel, stCls] = TASK_STATUS[t.status] || ['', ''];
+  const active = ACTIVE.has(t.status);
+  const time = active ? `идёт ${fmtDur(Date.now() - t.createdAt)}` : `${new Date(t.finishedAt || t.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · ${fmtDur((t.finishedAt || Date.now()) - t.createdAt)}`;
+  const detail = active
+    ? (last ? `${state.agents[last.agent]?.emoji || '•'} ${esc(plain(last.text).slice(0, 140))}` : 'ждёт начала')
+    : esc(plain(t.result || '—').slice(0, 160));
+  return `<div class="pitem ${t.status}">
+    <div class="pitem-top"><img src="${avatarURL(a.id, a.look)}" alt=""><div class="pitem-text">${esc(t.text.slice(0, 140))}</div><span class="status ${stCls}">${stLabel}</span></div>
+    <div class="pitem-meta"><span>${time}</span>${who.length ? `<span class="who-row">${who.map((w) => `<img title="${esc(w.name)}" src="${avatarURL(w.id, w.look)}" alt="">`).join('')}</span>` : ''}</div>
+    <div class="pitem-detail">${detail}</div>
+    <div class="bubble-actions">${taskButtons(t, true)}</div>
+  </div>`;
+}
+
+function renderPopup() {
+  if (!pop.open) return;
+  const all = [...state.tasks.values()];
+  const active = all.filter((t) => ACTIVE.has(t.status)).sort((a, b) => b.createdAt - a.createdAt);
+  const done = all.filter((t) => !ACTIVE.has(t.status)).sort((a, b) => (b.finishedAt || b.createdAt) - (a.finishedAt || a.createdAt)).slice(0, 30);
+  $('#popActiveN').textContent = active.length;
+  $('#popDoneN').textContent = done.length;
+  document.querySelectorAll('[data-ptab]').forEach((b) => b.classList.toggle('on', b.dataset.ptab === pop.tab));
+  const list = pop.tab === 'active' ? active : done;
+  $('#tasksPopBody').innerHTML = list.length ? list.map(popItem).join('') : `<div class="empty">${pop.tab === 'active' ? 'Сейчас ничего не выполняется 😴' : 'Готовых задач пока нет'}</div>`;
+}
+
+function openPopup(tab) {
+  pop.open = true;
+  pop.tab = tab;
+  $('#tasksPop').classList.remove('hidden');
+  $('#popShade').classList.remove('hidden');
+  renderPopup();
+  clearInterval(pop.timer);
+  pop.timer = setInterval(() => pop.tab === 'active' && renderPopup(), 1000); // «идёт 1 мин 12 с»
+}
+function closePopup() {
+  pop.open = false;
+  clearInterval(pop.timer);
+  $('#tasksPop').classList.add('hidden');
+  $('#popShade').classList.add('hidden');
+}
+document.querySelectorAll('[data-tasks]').forEach((b) => b.addEventListener('click', () => (pop.open && pop.tab === b.dataset.tasks ? closePopup() : openPopup(b.dataset.tasks))));
+document.querySelectorAll('[data-ptab]').forEach((b) => b.addEventListener('click', () => { pop.tab = b.dataset.ptab; renderPopup(); }));
+$('#popShade').addEventListener('click', closePopup);
+$('[data-popclose]').addEventListener('click', closePopup);
+addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopup(); });
+$('#tasksPop').addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b) taskAction(b.dataset.act, b.dataset.id, b); });
 
 function welcomeHTML() {
   const m = state.agents.mirik;
@@ -278,12 +368,8 @@ $('#chat').addEventListener('toggle', (e) => {
 $('#chat').addEventListener('click', async (e) => {
   const idea = e.target.closest('[data-idea]');
   if (idea) { $('#msg').value = idea.dataset.idea; autosize(); $('#msg').focus(); return; }
-  const c = e.target.closest('[data-cancel]');
-  if (c) { c.disabled = true; await api(`/api/tasks/${c.dataset.cancel}/cancel`, {}); return; }
-  const cp = e.target.closest('[data-copy]');
-  if (cp) { await navigator.clipboard?.writeText(state.tasks.get(cp.dataset.copy)?.result || ''); toast('Скопировано'); return; }
-  const r = e.target.closest('[data-retry]');
-  if (r) { const t = state.tasks.get(r.dataset.retry); if (t) send(t.text, t.agent); }
+  const b = e.target.closest('[data-act]');
+  if (b) taskAction(b.dataset.act, b.dataset.id, b);
 });
 $('#v-chat').addEventListener('scroll', () => { if (nearBottom()) $('#jump').classList.add('hidden'); });
 $('#jump').addEventListener('click', () => scrollChat(true));
