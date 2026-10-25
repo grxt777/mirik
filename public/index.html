@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Мирик HQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form class="login-card" id="loginForm">
+      <div class="logo">👑 Мирик HQ</div>
+      <p>Офис ИИ-агентов. Вход только для босса.</p>
+      <input id="password" type="password" placeholder="Пароль админки" autocomplete="current-password" />
+      <button type="submit">Войти в офис</button>
+      <div class="err" id="loginErr"></div>
+    </form>
+  </div>
+
+  <header class="top">
+    <div class="brand">👑 <span>Мирик HQ</span></div>
+    <div class="stats">
+      <div class="stat"><b id="sRunning">0</b><span>в работе</span></div>
+      <div class="stat"><b id="sDone">0</b><span>готово</span></div>
+      <div class="stat"><b id="sTokens">0</b><span>токенов</span></div>
+      <div class="stat"><b id="sCost">$0</b><span>расход</span></div>
+    </div>
+    <div class="conn"><i id="connDot"></i><span id="model">—</span></div>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <div class="canvas-wrap"><canvas id="office"></canvas></div>
+      <div id="card" class="card hidden"></div>
+      <form class="command" id="cmdForm">
+        <select id="cmdAgent"></select>
+        <input id="cmdText" placeholder="Дай задание… например: зайди на сайт школы и выгрузи домашку на завтра" autocomplete="off" />
+        <button type="submit">Отправить ➤</button>
+      </form>
+    </section>
+
+    <aside class="side">
+      <nav class="tabs">
+        <button data-tab="tasks" class="active">📋 Задания</button>
+        <button data-tab="feed">📡 Лента</button>
+        <button data-tab="team">👥 Команда</button>
+      </nav>
+      <div class="pane" id="tab-tasks"></div>
+      <div class="pane hidden" id="tab-feed"></div>
+      <div class="pane hidden" id="tab-team"></div>
+    </aside>
+  </main>
+  <div id="toasts"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
