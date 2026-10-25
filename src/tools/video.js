@@ -58,9 +58,13 @@ async function specPage(spec, projectDir) {
   return pathToFileURL(file).href;
 }
 
+// out — итоговый размер файла; render — размер, в котором снимает браузер (финал рисуется в 2/3 и растягивается ffmpeg:
+// для плоской графики на телефоне разницы не видно, а сервер без видеокарты работает в 2+ раза быстрее)
 function sizeFor(format, quality) {
   const [w, h] = FORMATS[format] || FORMATS.shorts;
-  return quality === 'draft' ? [Math.round(w / 2 / 2) * 2, Math.round(h / 2 / 2) * 2] : [w, h];
+  const even = (k) => [Math.round((w * k) / 2) * 2, Math.round((h * k) / 2) * 2];
+  if (quality === 'draft') { const d = even(0.5); return { out: d, render: d }; }
+  return { out: [w, h], render: quality === 'hd' ? [w, h] : even(2 / 3) };
 }
 
 async function openPage(url, width, height) {
@@ -83,12 +87,12 @@ function ffmpegArgs({ fps, width, height, duration, audio, out }) {
     const mix = audio.length > 1 ? `;${audio.map((_, i) => `[a${i}]`).join('')}amix=inputs=${audio.length}:duration=longest:normalize=0[aout]` : '';
     args.push('-filter_complex', chains.join(';') + mix, '-map', '0:v', '-map', audio.length > 1 ? '[aout]' : '[a0]', '-c:a', 'aac', '-b:a', '160k');
   }
-  args.push('-vf', `scale=${width}:${height},format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-r', String(fps), '-t', duration.toFixed(3), '-movflags', '+faststart', out);
+  args.push('-vf', `scale=${width}:${height}:flags=lanczos,format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-r', String(fps), '-t', duration.toFixed(3), '-movflags', '+faststart', out);
   return args;
 }
 
-async function renderMp4({ url, width, height, fps, duration, audio = [], out, ctx, label }) {
-  const page = await openPage(url, width, height);
+async function renderMp4({ url, width, height, renderSize, fps, duration, audio = [], out, ctx, label }) {
+  const page = await openPage(url, ...(renderSize || [width, height]));
   try {
     const broken = await page.evaluate(() => (window.__brokenImages ? window.__brokenImages() : []));
     const dur = Math.min(MAX_SECONDS, Number(duration) || (await page.evaluate(() => window.__duration)) || 10);
@@ -99,10 +103,24 @@ async function renderMp4({ url, width, height, fps, duration, audio = [], out, c
     const done = new Promise((resolve) => ff.on('close', resolve));
     ff.stdin.on('error', () => {});
     let lastPct = -1;
+    // кадры напрямую через CDP с быстрым JPEG — заметно легче для сервера без видеокарты
+    let cdp = null;
+    try { cdp = await page.context().newCDPSession(page); } catch {}
+    const shot = async () => {
+      if (cdp) {
+        try { return Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 88, optimizeForSpeed: true })).data, 'base64'); } catch { cdp = null; }
+      }
+      return page.screenshot({ type: 'jpeg', quality: 88 });
+    };
+    // наш шаблон описывает кадр целиком в DOM: если DOM не изменился — кадр тот же, снимать заново не нужно
+    const dedupe = await page.evaluate(() => !!window.__dedupe);
+    let prevSig = null, prevBuf = null, unique = 0;
     for (let i = 0; i < frames; i++) {
       if (ctx?.control?.cancelled) { ff.kill('SIGKILL'); throw new Error('Рендер отменён'); }
-      await page.evaluate((t) => window.__seek(t), i / fps);
-      const buf = await page.screenshot({ type: 'jpeg', quality: 90 });
+      const sig = await page.evaluate((t) => { window.__seek(t); return window.__dedupe ? document.getElementById('stage').innerHTML : null; }, i / fps);
+      let buf;
+      if (dedupe && sig === prevSig && prevBuf) buf = prevBuf;
+      else { buf = await shot(); unique++; prevSig = sig; prevBuf = buf; }
       if (!ff.stdin.write(buf)) await Promise.race([once(ff.stdin, 'drain'), done]);
       const pct = Math.floor((i / frames) * 100);
       if (pct >= lastPct + 5) { lastPct = pct; bus.emit('event', { type: 'render', agent: ctx?.agentId, pct, label }); }
@@ -112,7 +130,7 @@ async function renderMp4({ url, width, height, fps, duration, audio = [], out, c
     bus.emit('event', { type: 'render', agent: ctx?.agentId, pct: 100, label });
     if (code !== 0) throw new Error(`ffmpeg завершился с ошибкой: ${err.trim() || code}`);
     const { size } = await fs.stat(out);
-    return { dur, frames, size, broken };
+    return { dur, frames, unique, size, broken };
   } finally {
     await page.context().close().catch(() => {});
   }
@@ -130,22 +148,22 @@ export const videoTools = [
       properties: {
         scenes: { type: 'string', description: 'Путь к scenes.json, например projects/yt/myvideo/scenes.json' },
         out: { type: 'string', description: 'Куда сохранить, по умолчанию рядом: video.mp4 (или video_draft.mp4)' },
-        quality: { type: 'string', enum: ['final', 'draft'] },
-        fps: { type: 'integer', description: '24–30, по умолчанию 30 (черновик 24)' },
+        quality: { type: 'string', enum: ['final', 'draft', 'hd'], description: 'final — по умолчанию (быстро, отлично для телефона), hd — честный 1080p (в 2+ раза дольше), draft — черновик' },
+        fps: { type: 'integer', description: '12–30, по умолчанию 24' },
       },
       required: ['scenes'],
     },
     async run({ scenes, out, quality = 'final', fps }, ctx) {
       return exclusive(async () => {
         const { spec, projectDir, audio, total } = await loadSpec(scenes);
-        const [width, height] = sizeFor(spec.format, quality);
-        fps = Math.max(12, Math.min(30, Number(fps) || (quality === 'draft' ? 24 : 30)));
+        const { out: [width, height], render: renderSize } = sizeFor(spec.format, quality);
+        fps = Math.max(12, Math.min(30, Number(fps) || 24));
         const outFull = wsPath(out || rel(path.join(projectDir, quality === 'draft' ? 'video_draft.mp4' : 'video.mp4')));
         await fs.mkdir(path.dirname(outFull), { recursive: true });
         const url = await specPage(spec, projectDir);
         const t0 = Date.now();
-        const r = await renderMp4({ url, width, height, fps, duration: total, audio, out: outFull, ctx, label: spec.scenes[0]?.title || 'ролик' });
-        return `Готово: ${rel(outFull)} — ${r.dur.toFixed(1)} с, ${width}x${height}, ${fps} fps, ${r.frames} кадров, ${mb(r.size)}, рендер ${Math.round((Date.now() - t0) / 1000)} с.` +
+        const r = await renderMp4({ url, width, height, renderSize, fps, duration: total, audio, out: outFull, ctx, label: spec.scenes[0]?.title || 'ролик' });
+        return `Готово: ${rel(outFull)} — ${r.dur.toFixed(1)} с, ${width}x${height}, ${fps} fps, ${r.frames} кадров (снято ${r.unique}), ${mb(r.size)}, рендер ${Math.round((Date.now() - t0) / 1000)} с.` +
           (audio.length ? ` Звук: ${audio.map((a) => rel(a.file)).join(' + ')}.` : ' Без звука.') +
           (r.broken.length ? ` ⚠️ Не загрузились картинки: ${r.broken.join(', ')}` : '');
       });
@@ -174,7 +192,7 @@ export const videoTools = [
         const audio = [];
         if (voiceover) audio.push({ file: await resolveLocal(voiceover, dir), volume: 1 });
         if (music) audio.push({ file: await resolveLocal(music, dir), volume: voiceover ? 0.18 : 0.6, music: true });
-        const [width, height] = sizeFor(format, 'final');
+        const { out: [width, height] } = sizeFor(format, 'hd');
         const outFull = wsPath(out);
         await fs.mkdir(path.dirname(outFull), { recursive: true });
         const r = await renderMp4({ url: pathToFileURL(htmlFull).href, width, height, fps: Math.max(12, Math.min(30, fps)), duration, audio, out: outFull, ctx, label: path.basename(dir) });
@@ -203,7 +221,7 @@ export const videoTools = [
         if (scenes) {
           const { spec, projectDir } = await loadSpec(scenes);
           url = await specPage(spec, projectDir);
-          if (!width) [width, height] = sizeFor(spec.format, 'final');
+          if (!width) [width, height] = sizeFor(spec.format, 'hd').out;
         } else if (html) {
           url = pathToFileURL(wsPath(html)).href;
         } else return 'Укажи html или scenes';

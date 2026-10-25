@@ -12,7 +12,8 @@
   html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
   #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; font-family: Montserrat, Inter, "DejaVu Sans", sans-serif; color: var(--fg); }
   #bg { position: absolute; inset: 0; }
-  .blob { position: absolute; border-radius: 50%; filter: blur(calc(var(--u) * 9)); opacity: .55; }
+  /* пятна — радиальные градиенты: выглядят как размытие, но без дорогого filter: blur (на сервере нет GPU) */
+  .blob { position: absolute; border-radius: 50%; opacity: .6; }
   .scene { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
            padding: 9% 8%; box-sizing: border-box; text-align: center; will-change: transform, opacity; }
   .shorts .scene { padding: 16% 7% 26%; }
@@ -97,7 +98,7 @@
   // ---------- фон: градиент + плавающие пятна ----------
   const bg = document.getElementById('bg');
   bg.style.background = `linear-gradient(160deg, ${theme.bg[0]}, ${theme.bg[1]})`;
-  const blobs = theme.blobs.map((c, i) => { const b = el('div', 'blob'); b.style.background = c; b.style.width = b.style.height = `${38 + i * 10}vmax`; bg.append(b); return b; });
+  const blobs = theme.blobs.map((c, i) => { const b = el('div', 'blob'); b.style.background = `radial-gradient(circle at 50% 50%, ${c} 0%, ${c}99 25%, ${c}33 50%, transparent 70%)`; b.style.width = b.style.height = `${46 + i * 12}vmax`; bg.append(b); return b; });
 
   // ---------- сцены ----------
   const scenes = (SPEC.scenes || []).map((s) => ({ ...s, duration: Math.max(0.5, Math.min(30, Number(s.duration) || 3)) }));
@@ -195,13 +196,16 @@
   // ---------- кадр на момент t ----------
   function seek(t) {
     t = clamp(t, 0, Math.max(0, TOTAL - 1e-4));
-    // фон
+    // фон: пятна перетекают на смене сцены и стоят внутри неё — неподвижные кадры рендер не снимает заново
+    let si = 0;
+    while (si < scenes.length - 1 && t >= scenes[si + 1].start) si++;
+    const phase = si + ease((t - scenes[si].start) / 0.6);
     blobs.forEach((b, i) => {
-      const a = t * (0.12 + i * 0.05) + i * 2.1;
-      b.style.left = `${50 + Math.cos(a) * 30 - 25 - i * 5}%`;
-      b.style.top = `${50 + Math.sin(a * 1.3) * 28 - 25 + i * 4}%`;
+      const a = phase * 1.7 + i * 2.1;
+      b.style.left = `${(50 + Math.cos(a) * 30 - 25 - i * 5).toFixed(2)}%`;
+      b.style.top = `${(50 + Math.sin(a * 1.3) * 28 - 25 + i * 4).toFixed(2)}%`;
     });
-    progress.style.width = `${(t / TOTAL) * 100}%`;
+    progress.style.width = `${((Math.floor(t * 2) / 2 / TOTAL) * 100).toFixed(2)}%`;
     let current = null;
     scenes.forEach((s, i) => {
       const { node, parts } = built[i];
@@ -293,6 +297,7 @@
 
   // ---------- API для рендера ----------
   window.__duration = TOTAL;
+  window.__dedupe = true; // DOM полностью описывает кадр — одинаковые кадры можно не снимать заново
   window.__seek = seek;
   const imgReady = Promise.all(imgs.map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
   window.__ready = Promise.race([Promise.all([document.fonts.ready, imgReady]), new Promise((r) => setTimeout(r, 10000))]).then(() => seek(0));
