@@ -2,8 +2,8 @@
 import { config } from './config.js';
 import { store, save } from './store.js';
 
-export async function chat({ messages, tools, temperature = 0.4, maxTokens = 4000 }) {
-  const body = { model: config.model, messages, temperature, max_tokens: maxTokens };
+export async function chat({ messages, tools, temperature = 0.4, maxTokens = 4000, model = config.model }) {
+  const body = { model, messages, temperature, max_tokens: maxTokens };
   if (tools?.length) body.tools = tools;
 
   let lastErr;

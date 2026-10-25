@@ -8,6 +8,7 @@ import { bus } from './bus.js';
 import { AGENTS, AGENT_LIST } from './agents/registry.js';
 import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
 import { wsPath } from './tools/files.js';
+import { transcribe } from './voice.js';
 
 export let bot = null;
 
@@ -151,7 +152,7 @@ export function startBot() {
 
   bot.command('start', (ctx) =>
     ctx.reply(
-      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото и файлы.\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика`,
+      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото, файлы и голосовые 🎙\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика`,
       { reply_markup: officeKeyboard() }
     )
   );
@@ -257,7 +258,25 @@ export function startBot() {
     handleTask(ctx, { text: `Пользователь прислал файл ${rel}. ${ctx.message.caption || 'Посмотри, что в нём, и скажи, что с ним сделать.'}` });
   });
 
-  bot.on('message:voice', (ctx) => ctx.reply('🎙 Голосовые пока не понимаю — напиши текстом, скоро научусь.'));
+  // Голосовые, аудио и кружочки -> текст -> задание
+  bot.on(['message:voice', 'message:audio', 'message:video_note'], async (ctx) => {
+    const m = ctx.message;
+    const media = m.voice || m.audio || m.video_note;
+    if (media.file_size > 20 * 1024 * 1024) return ctx.reply('Слишком большой файл (лимит Telegram — 20 МБ)');
+    await ctx.api.sendChatAction(ctx.chat.id, 'typing').catch(() => {});
+    const note = await ctx.reply('🎙 Слушаю…', { reply_parameters: { message_id: m.message_id } });
+    try {
+      const file = await ctx.api.getFile(media.file_id);
+      const res = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
+      const ext = file.file_path.split('.').pop() || 'ogg';
+      const text = await transcribe(Buffer.from(await res.arrayBuffer()), ext === 'oga' ? 'ogg' : ext);
+      if (!text) return ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Не расслышал — попробуй ещё раз');
+      await ctx.api.editMessageText(ctx.chat.id, note.message_id, `🎙 «${text.slice(0, 3900)}»`);
+      handleTask(ctx, { text: (m.caption ? m.caption + '\n' : '') + text });
+    } catch (e) {
+      await ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Не получилось распознать: ' + e.message).catch(() => {});
+    }
+  });
 
   bot.on('message:text', (ctx) => {
     handleTask(ctx, { text: ctx.message.text });
