@@ -65,6 +65,29 @@ export function startServer() {
     res.status(401).json({ error: 'Неверный пароль' });
   });
 
+  // Канал с Саней: он присылает задания Мирику. Отдельный токен, админская сессия ему не нужна.
+  app.post('/link/ask', async (req, res) => {
+    const got = Buffer.from(String(req.headers.authorization || '').replace(/^Bearer /, ''));
+    const want = Buffer.from(config.linkToken);
+    if (!config.linkToken || got.length !== want.length || !crypto.timingSafeEqual(got, want)) return res.status(401).json({ error: 'auth' });
+    const text = String(req.body?.text || '').trim();
+    const from = String(req.body?.from || 'Саня').slice(0, 40);
+    if (!text) return res.status(400).json({ error: 'Пустое задание' });
+    const io = ownerIO();
+    const job = talkToMirik('sanya', { text: `[${from}]: ${text}`, source: 'sanya' }, { ...io, fromSanya: true });
+    // держим запрос до 50 с; дольше — Мирик доделает и отчитается владельцу в Telegram сам
+    const late = Symbol('late');
+    try {
+      const r = await Promise.race([job, new Promise((ok) => setTimeout(() => ok(late), 50_000))]);
+      if (r !== late) return res.json({ reply: r.result });
+      res.json({ pending: true });
+      job.then(({ result }) => io.notify?.(`🤝 Поручение от ${from}: «${text.slice(0, 200)}»\n\n${result.slice(0, 3500)}`))
+        .catch((e) => io.notify?.(`⚠️ Поручение от ${from} не выполнено: ${e.message}`));
+    } catch (e) {
+      res.status(503).json({ error: e.message });
+    }
+  });
+
   app.use('/api', (req, res, next) => (authed(req.headers['x-token']) ? next() : res.status(401).json({ error: 'auth' })));
 
   app.get('/api/state', (_, res) => res.json(snapshot()));

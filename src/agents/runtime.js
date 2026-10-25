@@ -1,5 +1,6 @@
 // Цикл работы агентов: думаем -> вызываем инструменты -> отчитываемся. Мирик делегирует подчинённым.
 import { chat } from '../llm.js';
+import { config } from '../config.js';
 import { AGENTS, AGENT_LIST } from './registry.js';
 import { bus, log } from '../bus.js';
 import { store, save, addMemory, chatHistory, pushHistory } from '../store.js';
@@ -94,6 +95,27 @@ const builtinTools = [
     },
   },
   {
+    name: 'ask_sanya',
+    description: 'Написать Сане — личному ассистенту владельца — и получить ответ. Саня ведёт память о владельце, дневник (дни, деньги, здоровье), свои таблицы, напоминания, будильники на iPhone, дедлайны e-class. Ты старший — можешь поручать ему изменения.',
+    parameters: { type: 'object', properties: { text: { type: 'string', description: 'Вопрос или поручение со всем нужным контекстом' } }, required: ['text'] },
+    async run({ text }, ctx) {
+      if (!config.sanyaUrl || !config.linkToken) return 'Связь с Саней не настроена';
+      // задачу от Сани обратно ему не отдаём — иначе они будут гонять её по кругу
+      if (ctx.fromSanya) return 'Это задание пришло от Сани — не передавай его обратно, сделай сам.';
+      bus.emit('event', { type: 'delegate', from: ctx.agentId, to: 'sanya', text: text.slice(0, 120) });
+      log(ctx.agentId, `→ Саня: ${text}`, 'delegate');
+      const res = await fetch(`${config.sanyaUrl}/link/ask`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.linkToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, from: AGENTS[ctx.agentId]?.name || 'Мирик' }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.pending) return 'Саня ещё работает — результат он пришлёт владельцу в Telegram сам.';
+      return data.reply ? `Ответ Сани:\n${data.reply}` : `Ошибка связи с Саней: ${data.error || 'HTTP ' + res.status}`;
+    },
+  },
+  {
     name: 'notify_user',
     description: 'Отправить владельцу промежуточное сообщение о прогрессе.',
     parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
@@ -121,6 +143,7 @@ function activityLabel(name, args) {
     case 'browser_type': case 'browser_fill_secret': return 'печатает в форму';
     case 'browser_screenshot': return 'делает скриншот';
     case 'delegate': return `поручает ${AGENTS[args.agent]?.name || ''}`;
+    case 'ask_sanya': return 'пишет Сане';
     case 'send_file': return 'отправляет файл';
     case 'remember': return 'записывает в блокнот';
     default: return name;
