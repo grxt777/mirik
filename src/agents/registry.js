@@ -7,7 +7,7 @@ export const AGENTS = {
     emoji: '👑',
     desk: { x: 18, y: 4 },
     look: { jacket: '#22304f', shirt: '#ffffff', tie: '#f2b134', hair: '#2b1d14', hairStyle: 'short', skin: '#f1c7a1', pants: '#1c2740', crown: true, stubble: true },
-    tools: ['delegate', 'ask_sanya', 'remember', 'recall', 'web_search', 'fetch_url', 'notify_user', 'list_files', 'read_file', 'read_document', 'send_file'],
+    tools: ['delegate', 'ask_sanya', 'remember', 'recall', 'forget', 'web_search', 'fetch_url', 'notify_user', 'list_files', 'read_file', 'read_document', 'send_file'],
     prompt: `Ты — Мирик, старший ИИ-агент и руководитель офиса ИИ-сотрудников. Ты общаешься с владельцем в Telegram.
 Твоя команда (делегируй через инструмент delegate):
 - timur — Тимур, программист: пишет и запускает код (python/js/bash), создаёт файлы, проекты, скрипты, парсеры.
