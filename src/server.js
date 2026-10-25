@@ -9,7 +9,7 @@ import { config } from './config.js';
 import { store } from './store.js';
 import { bus, recentLogs } from './bus.js';
 import { AGENT_LIST } from './agents/registry.js';
-import { agentState, createTask, runTask, cancelTask } from './agents/runtime.js';
+import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
 import { bot, ownerChats } from './bot.js';
 
 const SESSION = crypto.createHash('sha256').update('mirik:' + config.adminPassword + ':' + config.botToken).digest('hex');
@@ -34,7 +34,7 @@ const publicTask = (t) => ({ ...t, steps: t.steps.slice(-40) });
 function snapshot() {
   return {
     agents: AGENT_LIST.map(({ prompt, tools, ...a }) => ({ ...a, tools, state: agentState[a.id] })),
-    tasks: store.tasks.slice(-40).map(publicTask),
+    tasks: store.tasks.slice(-60).map(publicTask),
     logs: recentLogs(),
     stats: store.stats,
     model: config.model,
@@ -73,11 +73,18 @@ export function startServer() {
     const { text, agent = 'mirik' } = req.body || {};
     if (!text?.trim()) return res.status(400).json({ error: 'Пустое задание' });
     if (!AGENT_LIST.some((a) => a.id === agent)) return res.status(400).json({ error: 'Нет такого агента' });
-    const task = createTask({ text: text.trim(), agent, source: 'panel' });
     const io = ownerIO();
-    runTask(task, io)
-      .then((result) => io.notify?.(`✅ Задание из офиса выполнено:\n«${task.text.slice(0, 100)}»\n\n${result.slice(0, 3500)}`))
-      .catch(() => {});
+    const notifyDone = (task, result) => io.notify?.(`✅ Задание из офиса выполнено:\n«${task.text.slice(0, 100)}»\n\n${result.slice(0, 3500)}`);
+    // Мирику — с памятью диалога офиса, сотрудникам — напрямую
+    if (agent === 'mirik') {
+      let created;
+      talkToMirik('panel', { text: text.trim(), source: 'panel', onTask: (t) => (created = t) }, io)
+        .then(({ task, result }) => notifyDone(task, result))
+        .catch(() => {});
+      return res.json({ task: publicTask(created) });
+    }
+    const task = createTask({ text: text.trim(), agent, source: 'panel' });
+    runTask(task, io).then((result) => notifyDone(task, result)).catch(() => {});
     res.json({ task: publicTask(task) });
   });
 

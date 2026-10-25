@@ -2,57 +2,75 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#14121c" />
   <title>Мирик HQ</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Unbounded:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <div id="login" class="login hidden">
     <form class="login-card" id="loginForm">
-      <div class="logo">👑 Мирик HQ</div>
+      <div class="login-crown">👑</div>
+      <h1>Мирик HQ</h1>
       <p>Офис ИИ-агентов. Вход только для босса.</p>
-      <input id="password" type="password" placeholder="Пароль админки" autocomplete="current-password" />
-      <button type="submit">Войти в офис</button>
+      <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
+      <button type="submit" class="btn primary">Войти в офис</button>
       <div class="err" id="loginErr"></div>
     </form>
   </div>
 
-  <header class="top">
-    <div class="brand">👑 <span>Мирик HQ</span></div>
-    <div class="stats">
-      <div class="stat"><b id="sRunning">0</b><span>в работе</span></div>
-      <div class="stat"><b id="sDone">0</b><span>готово</span></div>
-      <div class="stat"><b id="sTokens">0</b><span>токенов</span></div>
-      <div class="stat"><b id="sCost">$0</b><span>расход</span></div>
-    </div>
-    <div class="conn"><i id="connDot"></i><span id="model">—</span></div>
-  </header>
+  <div class="app" id="app">
+    <header class="top">
+      <div class="brand"><span>👑</span><b>Мирик</b><em>HQ</em></div>
+      <div class="crew" id="crew"></div>
+      <div class="meta">
+        <div class="pill" id="pRunning" title="Задачи в работе"><i class="pulse"></i><b id="sRunning">0</b><span class="lbl">в работе</span></div>
+        <div class="pill hide-sm" title="Выполнено"><b id="sDone">0</b><span class="lbl">готово</span></div>
+        <div class="pill hide-sm" title="Расход на модель"><b id="sCost">$0</b><span class="lbl">расход</span></div>
+        <i id="connDot" class="conn" title="Нет соединения"></i>
+      </div>
+    </header>
 
-  <main class="layout">
-    <section class="stage">
-      <div class="canvas-wrap"><canvas id="office"></canvas></div>
-      <div id="card" class="card hidden"></div>
-      <form class="command" id="cmdForm">
-        <select id="cmdAgent"></select>
-        <input id="cmdText" placeholder="Дай задание… например: зайди на сайт школы и выгрузи домашку на завтра" autocomplete="off" />
-        <button type="submit">Отправить ➤</button>
-      </form>
-    </section>
+    <main class="main">
+      <section class="world" id="world">
+        <canvas id="office"></canvas>
+        <div class="world-tools">
+          <button class="tool" data-z="in" title="Приблизить">+</button>
+          <button class="tool" data-z="out" title="Отдалить">−</button>
+          <button class="tool" data-z="fit" title="Весь офис">⤢</button>
+          <button class="tool only-sm" data-z="expand" title="Развернуть офис">⇕</button>
+        </div>
+        <div class="world-hint" id="hint">Тяни — двигать · колесо/щипок — зум · клик по человечку — карточка</div>
+        <div id="card" class="card hidden"></div>
+      </section>
 
-    <aside class="side">
-      <nav class="tabs">
-        <button data-tab="tasks" class="active">📋 Задания</button>
-        <button data-tab="feed">📡 Лента</button>
-        <button data-tab="team">👥 Команда</button>
-      </nav>
-      <div class="pane" id="tab-tasks"></div>
-      <div class="pane hidden" id="tab-feed"></div>
-      <div class="pane hidden" id="tab-team"></div>
-    </aside>
-  </main>
+      <aside class="panel">
+        <nav class="tabs" role="tablist">
+          <button data-tab="chat" class="active">💬 Чат</button>
+          <button data-tab="team">👥 Команда</button>
+          <button data-tab="feed">📡 Лента <span class="badge-dot hidden" id="feedDot"></span></button>
+        </nav>
+        <div class="views">
+          <div class="view" id="v-chat"><div class="chat" id="chat"></div><button class="jump hidden" id="jump">↓ Новые</button></div>
+          <div class="view hidden" id="v-team"></div>
+          <div class="view hidden" id="v-feed"></div>
+        </div>
+        <form class="composer" id="composer">
+          <div class="to" id="to"></div>
+          <div class="row">
+            <textarea id="msg" rows="1" placeholder="Задание для Мирика…" enterkeyhint="send"></textarea>
+            <button class="send" type="submit" title="Отправить" aria-label="Отправить">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>
+            </button>
+          </div>
+        </form>
+      </aside>
+    </main>
+  </div>
   <div id="toasts"></div>
   <script type="module" src="app.js"></script>
 </body>

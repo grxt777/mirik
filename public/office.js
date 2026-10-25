@@ -1,64 +1,107 @@
-// Игровой офис: карта, мебель, пиксельные персонажи, поиск пути и поведение.
+// Игровой офис v2: детальная пиксельная графика, освещение, камера (зум/панорама), агенты и кот.
 export const T = 32;
 export const W = 24;
 export const H = 17;
+const WW = W * T;
+const WH = H * T;
+const OUT = '#1b1726';
+const UI_FONT = '600 12px Inter, system-ui, sans-serif';
 
-const FONT = '"Pixelify Sans", monospace';
+// ---------- утилиты ----------
+const px = (c, x, y, w, h, col) => { c.fillStyle = col; c.fillRect(x, y, w, h); };
+function box(c, x, y, w, h, col, o = {}) {
+  if (o.outline !== false) px(c, x - 1, y - 1, w + 2, h + 2, o.outline || OUT);
+  px(c, x, y, w, h, col);
+  if (o.hi) px(c, x, y, w, o.hiH || 2, o.hi);
+  if (o.lo) px(c, x, y + h - (o.loH || 3), w, o.loH || 3, o.lo);
+}
+export function shade(hex, k) {
+  const n = parseInt(hex.slice(1), 16);
+  const f = (v) => Math.max(0, Math.min(255, Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k)));
+  return `rgb(${f(n >> 16)},${f((n >> 8) & 255)},${f(n & 255)})`;
+}
+function rng(seed) {
+  let s = seed % 2147483647 || 1;
+  return () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646;
+}
+const ellipse = (c, x, y, rx, ry, col) => { c.fillStyle = col; c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); c.fill(); };
 
 // ---------- карта ----------
 const blocked = new Set();
 const key = (x, y) => x + ',' + y;
-const block = (x, y, w = 1, h = 1) => {
-  for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) blocked.add(key(x + i, y + j));
-};
+const block = (x, y, w = 1, h = 1) => { for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) blocked.add(key(x + i, y + j)); };
 for (let x = 0; x < W; x++) { block(x, 0); block(x, 1); block(x, H - 1); }
 for (let y = 0; y < H; y++) { block(0, y); block(W - 1, y); }
-// стекло кабинета Мирика (дверь в (19,7))
-for (let y = 2; y <= 7; y++) block(15, y);
-for (let x = 15; x < W; x++) if (x !== 19) block(x, 7);
+for (let y = 2; y <= 7; y++) block(15, y);              // стекло кабинета (вертикаль)
+for (let x = 16; x < W - 1; x++) if (x !== 19) block(x, 7); // стекло кабинета (низ), дверь x=19
 
 const furniture = [];
 function add(kind, x, y, w = 1, h = 1, extra = {}) {
-  furniture.push({ kind, x, y, w, h, ...extra });
+  const f = { kind, x, y, w, h, ...extra };
+  furniture.push(f);
   if (!extra.walkable) block(x, y, w, h);
+  return f;
 }
-add('bookshelf', 21, 2, 2, 1);
-add('plant', 16, 2);
-add('couch', 16, 5, 2, 1);
+// open space
 add('plant', 1, 2);
-add('plant', 14, 2);
-add('printer', 13, 4);
-add('cooler', 13, 9);
-add('meeting', 17, 9, 4, 2);
-add('sofa', 11, 15, 3, 1);
-add('plant', 1, 15);
+add('plant', 14, 2, 1, 1, { big: true });
+add('server', 13, 2);
+add('printer', 13, 5);
+add('cooler', 13, 8);
+add('plant', 1, 10, 1, 1, { big: true });
+// лаунж
+add('rug', 1, 12, 6, 4, { walkable: true, flat: true });
+add('coffeetable', 2, 13, 3, 1);
+add('sofa', 2, 15, 3, 1);
+add('pingpong', 8, 13, 3, 1);
+add('arcade', 13, 12);
+add('catbed', 12, 15, 1, 1, { walkable: true, flat: true });
 add('plant', 14, 15);
-add('counter', 18, 15, 5, 1);
-add('fridge', 22, 13, 1, 2);
-add('bistro', 16, 13);
-add('pingpong', 4, 13, 3, 1);
-add('arcade', 1, 8);
+add('bookcase', 7, 15, 1, 1);
+// кабинет Мирика
+add('rug', 17, 3, 5, 3, { walkable: true, flat: true, boss: true });
+add('bookshelf', 21, 2, 2, 1);
+add('plant', 16, 2, 1, 1, { big: true });
+add('couch', 21, 6, 2, 1);
+add('plant', 16, 6);
+// переговорка
+add('meeting', 17, 9, 4, 2);
+add('plant', 22, 8);
+// кухня
+add('counter', 17, 15, 5, 1);
+add('fridge', 22, 15);
+add('vending', 16, 15);
+add('bistro', 18, 13);
+add('plant', 22, 12);
 
+// точки интереса: tile — куда идти, dir — куда смотреть, sit — сесть (px)
 const POIS = [
-  { x: 20, y: 14, say: '☕ кофе', who: 'all' },
-  { x: 19, y: 14, say: '☕ эспрессо', who: 'all' },
-  { x: 12, y: 9, say: '💧 водичка', who: 'staff' },
-  { x: 12, y: 14, say: '🛋 перерыв', who: 'staff' },
-  { x: 3, y: 2, say: '🌤 красота', who: 'staff' },
-  { x: 8, y: 2, say: '🌤 смотрю в окно', who: 'staff' },
-  { x: 12, y: 4, say: '🖨 печатаю', who: 'staff' },
-  { x: 21, y: 13, say: '🍪 печенька', who: 'all' },
-  { x: 17, y: 11, say: '🗣 обсуждаем', who: 'all' },
-  { x: 2, y: 14, say: '🌱 полить', who: 'staff' },
-  { x: 3, y: 13, say: '🏓 пинг!', who: 'staff' },
-  { x: 7, y: 13, say: '🏓 понг!', who: 'all' },
-  { x: 2, y: 8, say: '🕹 рекорд!', who: 'staff' },
-  { x: 17, y: 2, say: '🌇 думаю о вечном', who: 'mirik' },
-  { x: 17, y: 4, say: '📊 планирую', who: 'mirik' },
+  { x: 19, y: 14, dir: 'down', say: '☕ кофе', who: 'all' },
+  { x: 20, y: 14, dir: 'down', say: '🍵 чай', who: 'all' },
+  { x: 22, y: 14, dir: 'down', say: '🍪 печенька', who: 'all' },
+  { x: 16, y: 14, dir: 'down', say: '🥤 газировка', who: 'staff' },
+  { x: 17, y: 13, dir: 'right', say: '🥐 перекус', who: 'all' },
+  { x: 12, y: 8, dir: 'right', say: '💧 водичка', who: 'staff' },
+  { x: 3, y: 14, dir: 'down', say: '🛋 перерыв', who: 'staff', sit: { x: 3.5 * T, y: 15 * T + 12 } },
+  { x: 2, y: 14, dir: 'down', say: '📱 листаю ленту', who: 'staff', sit: { x: 2.5 * T, y: 15 * T + 12 } },
+  { x: 4, y: 14, dir: 'down', say: '😌 отдыхаю', who: 'staff', sit: { x: 4.5 * T, y: 15 * T + 12 } },
+  { x: 7, y: 13, dir: 'right', say: '🏓 пинг!', who: 'staff' },
+  { x: 11, y: 13, dir: 'left', say: '🏓 понг!', who: 'all' },
+  { x: 13, y: 13, dir: 'up', say: '🕹 новый рекорд!', who: 'staff' },
+  { x: 12, y: 5, dir: 'right', say: '🖨 печатаю', who: 'staff' },
+  { x: 3, y: 2, dir: 'up', say: '🌤 красота', who: 'staff' },
+  { x: 8, y: 2, dir: 'up', say: '🏙 вид огонь', who: 'staff' },
+  { x: 12, y: 2, dir: 'right', say: '🖥 сервер шуршит', who: 'staff' },
+  { x: 7, y: 14, dir: 'down', say: '📖 почитаю', who: 'staff' },
+  { x: 16, y: 9, dir: 'right', say: '🗣 обсуждаем', who: 'all' },
+  { x: 21, y: 10, dir: 'left', say: '📊 созвон', who: 'all' },
+  { x: 18, y: 2, dir: 'up', say: '🌇 думаю о вечном', who: 'mirik' },
+  { x: 21, y: 3, dir: 'up', say: '📚 перечитываю', who: 'mirik' },
+  { x: 17, y: 5, dir: 'right', say: '📞 переговоры', who: 'mirik' },
 ];
+const CAT_SPOTS = [{ x: 12, y: 14 }, { x: 4, y: 12 }, { x: 18, y: 12 }, { x: 9, y: 11 }, { x: 20, y: 8 }, { x: 5, y: 6 }];
 
 const free = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !blocked.has(key(x, y));
-
 function findPath(sx, sy, tx, ty) {
   if (sx === tx && sy === ty) return [];
   const prev = new Map([[key(sx, sy), null]]);
@@ -68,7 +111,7 @@ function findPath(sx, sy, tx, ty) {
     if (x === tx && y === ty) break;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = x + dx, ny = y + dy, k = key(nx, ny);
-      if (prev.has(k) || (!free(nx, ny) && !(nx === tx && ny === ty))) continue;
+      if (prev.has(k) || !free(nx, ny)) continue;
       prev.set(k, [x, y]);
       q.push([nx, ny]);
     }
@@ -78,71 +121,238 @@ function findPath(sx, sy, tx, ty) {
   for (let c = [tx, ty]; c && !(c[0] === sx && c[1] === sy); c = prev.get(key(c[0], c[1]))) path.unshift(c);
   return path;
 }
-
 const tileFeet = (tx, ty) => ({ x: (tx + 0.5) * T, y: (ty + 0.75) * T });
+function nearestFree(x, y) {
+  const tx = Math.floor(x / T), ty = Math.floor(y / T - 0.25);
+  if (free(tx, ty)) return [tx, ty];
+  for (let r = 1; r < 4; r++) for (const [dx, dy] of [[0, r], [0, -r], [r, 0], [-r, 0], [r, r], [-r, r]]) if (free(tx + dx, ty + dy)) return [tx + dx, ty + dy];
+  return [tx, ty];
+}
 
 // ---------- персонаж ----------
-function drawChar(c, fx, fy, look, o) {
+export function drawChar(c, fx, fy, look, o = {}) {
   const u = 2;
-  const sit = o.sitting ? 4 : 0;
-  const bob = o.walking ? Math.abs(Math.sin(o.t * 12)) * 1.2 : o.sitting ? 0 : Math.sin(o.t * 2) * 0.3;
-  const ox = Math.round(fx - 6 * u);
-  const oy = Math.round(fy - 20 * u + sit * u - bob * u);
-  const r = (x, y, w, h, col) => { c.fillStyle = col; c.fillRect(ox + x * u, oy + y * u, w * u, h * u); };
-  const back = o.dir === 'up';
-  const side = o.dir === 'left' ? -1 : o.dir === 'right' ? 1 : 0;
+  const dir = o.dir || 'down';
+  const sit = !!o.sitting;
+  const t = o.t || 0;
+  const walk = o.walking ? Math.sin(t * 11) : 0;
+  const bob = o.walking ? Math.abs(Math.sin(t * 11)) * 0.8 : sit ? Math.sin(t * 1.6) * 0.15 : Math.sin(t * 2.2) * 0.25;
+  const lift = sit ? 5 : 0;
+  if (!sit && !o.noShadow) ellipse(c, fx, fy, 8 * u, 2.2 * u, 'rgba(0,0,0,.28)');
+  c.save();
+  c.translate(Math.round(fx), Math.round(fy));
+  if (dir === 'left') c.scale(-1, 1);
+  const ox = -7 * u, oy = -23 * u + lift * u - bob * u;
+  const parts = [];
+  const P = (x, y, w, h, col, ol = true) => parts.push([x, y, w, h, col, ol]);
 
-  if (!o.sitting) {
-    c.fillStyle = 'rgba(0,0,0,.28)';
-    c.beginPath(); c.ellipse(fx, fy, 7 * u, 2 * u, 0, 0, Math.PI * 2); c.fill();
-    const ph = o.walking ? Math.sin(o.t * 12) : 0;
-    const pants = look.pants || '#2d3142';
-    r(3, 16, 2.5, 4 - Math.max(0, ph) * 1.2, pants);
-    r(6.5, 16, 2.5, 4 - Math.max(0, -ph) * 1.2, pants);
-    r(3, 19 - Math.max(0, ph) * 1.2, 2.5, 1, '#15151c');
-    r(6.5, 19 - Math.max(0, -ph) * 1.2, 2.5, 1, '#15151c');
-  }
-  // руки
-  const tA = o.typing ? Math.sin(o.t * 22) * 0.7 : 0;
-  const swing = o.walking ? Math.sin(o.t * 12) * 1 : 0;
-  r(1, 9 + swing, 1.6, 6, look.shirt);
-  r(9.4, 9 - swing, 1.6, 6, look.shirt);
-  r(1, 14.4 + swing + tA, 1.6, 1.4, look.skin);
-  r(9.4, 14.4 - swing - tA, 1.6, 1.4, look.skin);
-  // туловище
-  r(2.4, 9, 7.2, 7.4, look.shirt);
-  r(8.2, 9, 1.4, 7.4, 'rgba(0,0,0,.15)');
-  if (look.tie && !back) { r(5.5, 9, 1, 0.8, '#fff'); r(5.6, 9.6, 0.9, 4.6, look.tie); }
-  r(5, 8, 2, 1.2, look.skin);
-  // голова
-  r(3, 2, 6, 6.4, look.skin);
-  r(3, 1, 6, 2.2, look.hair);
-  if (back) r(3, 1, 6, 6.6, look.hair);
-  else {
-    r(3, 2.4, 1, 2.6, look.hair);
-    r(8, 2.4, 1, 2.6, look.hair);
-    if (look.longHair) { r(2.2, 2.4, 1.4, 8, look.hair); r(8.4, 2.4, 1.4, 8, look.hair); }
-    const eh = o.blink ? 0.3 : 1.1;
-    r(4.4 + side * 0.6, 5 + (1.1 - eh) / 2, 1, eh, '#1a1a22');
-    r(6.6 + side * 0.6, 5 + (1.1 - eh) / 2, 1, eh, '#1a1a22');
-    if (look.longHair) { r(3.6, 6.4, 1, 0.6, 'rgba(255,120,140,.45)'); r(7.4, 6.4, 1, 0.6, 'rgba(255,120,140,.45)'); }
-    if (look.glasses) {
-      c.strokeStyle = '#222'; c.lineWidth = 1;
-      c.strokeRect(ox + (3.9 + side * 0.6) * u, oy + 4.5 * u, 2 * u, 2 * u);
-      c.strokeRect(ox + (6.1 + side * 0.6) * u, oy + 4.5 * u, 2 * u, 2 * u);
+  const skin = look.skin, skinS = shade(skin, -0.14), hair = look.hair, hairS = shade(hair, -0.3);
+  const top = look.jacket || look.shirt, topS = shade(top, -0.22);
+  const pants = look.pants || '#2f3447', shoes = '#1d1b24';
+  const eh = o.blink ? 0.3 : 1.4;
+  const typ = o.typing ? Math.sin(t * 20) * 0.5 : 0;
+  const sw = walk * 1.1;
+
+  if (dir === 'down' || dir === 'up') {
+    const back = dir === 'up';
+    if (!sit) {
+      const l1 = Math.max(0, walk) * 1.4, l2 = Math.max(0, -walk) * 1.4;
+      P(4.2, 16.5, 2.6, 5 - l1, pants); P(7.2, 16.5, 2.6, 5 - l2, pants);
+      P(3.8, 21.2 - l1, 3.2, 1.6, shoes); P(7, 21.2 - l2, 3.2, 1.6, shoes);
+    } else if (!back) {
+      P(4.2, 16.5, 2.6, 2.4, pants); P(7.2, 16.5, 2.6, 2.4, pants);
     }
-    if (o.talking) r(5.3, 7, 1.4, 0.6, '#7a3b3b');
+    P(1.8, 10.6 + sw, 1.8, 5, top); P(10.4, 10.6 - sw, 1.8, 5, top);
+    P(1.8, 15.4 + sw + typ, 1.8, 1.4, skin); P(10.4, 15.4 - sw - typ, 1.8, 1.4, skin);
+    P(3.4, 10, 7.2, 6.8, top);
+    P(9.2, 10, 1.4, 6.8, topS, false);
+    if (!back) {
+      if (look.jacket) {
+        P(6, 10, 2, 5.6, look.shirt || '#ffffff', false);
+        if (look.tie) { P(6.55, 10.3, 0.9, 4.8, look.tie, false); P(6.3, 10.1, 1.4, 0.9, shade(look.tie, -0.2), false); }
+        P(5.4, 10, 0.6, 6.6, topS, false); P(8, 10, 0.6, 6.6, topS, false);
+      } else P(5.6, 10, 2.8, 0.8, shade(top, -0.32), false);
+      if (look.hood) { P(4.6, 10.6, 0.4, 2.4, '#eeeeee', false); P(9, 10.6, 0.4, 2.4, '#eeeeee', false); }
+    } else if (look.hood) P(4, 9.4, 6, 2.2, shade(top, -0.12), false);
+    P(3.4, 16.2, 7.2, 0.8, '#2a2433', false);
+    P(6, 9, 2, 1.4, skinS, false);
+    P(3.6, 2.6, 6.8, 6.8, skin);
+    P(9.4, 3, 1, 6, skinS, false);
+    P(3, 5.6, 0.8, 1.6, skin); P(10.2, 5.6, 0.8, 1.6, skin);
+    if (!back) {
+      P(5, 6 + (1.4 - eh) / 2, 1, eh, '#1f1a2b', false); P(8, 6 + (1.4 - eh) / 2, 1, eh, '#1f1a2b', false);
+      if (!o.blink) { P(5, 6, 0.45, 0.45, '#ffffff', false); P(8, 6, 0.45, 0.45, '#ffffff', false); }
+      P(4.8, 4.9, 1.4, 0.5, hairS, false); P(7.8, 4.9, 1.4, 0.5, hairS, false);
+      if (o.talking) P(6.3, 8, 1.4, 0.9, '#7a3340', false); else P(6.2, 8.2, 1.6, 0.45, '#b5655a', false);
+      if (look.blush) { P(4, 7.4, 1.2, 0.6, 'rgba(255,110,140,.45)', false); P(8.8, 7.4, 1.2, 0.6, 'rgba(255,110,140,.45)', false); }
+      if (look.stubble) P(4.4, 7.7, 5.2, 1.5, 'rgba(70,45,30,.22)', false);
+      if (look.glasses) {
+        for (const lx of [4.4, 7.4]) { P(lx, 5.5, 2.2, 0.4, '#222', false); P(lx, 7.3, 2.2, 0.4, '#222', false); P(lx, 5.5, 0.4, 2.2, '#222', false); P(lx + 1.8, 5.5, 0.4, 2.2, '#222', false); }
+        P(6.6, 6.1, 0.8, 0.35, '#222', false);
+      }
+    }
+    // волосы
+    const st = look.hairStyle || 'short';
+    if (look.cap) {
+      if (back) P(3.2, 2.2, 7.6, 5.6, hair);
+      P(3, 1.2, 8, 3.2, look.cap);
+      P(3, 3.6, 8, 0.8, shade(look.cap, -0.25), false);
+      if (look.capBack === back) P(3.6, 4, 6.8, 1, shade(look.cap, -0.3));
+      if (!back) { P(3.2, 4.2, 1, 1.6, hair, false); P(9.8, 4.2, 1, 1.6, hair, false); }
+    } else if (back) {
+      if (st === 'long') P(2.8, 2.4, 8.4, 10.6, hair);
+      P(3.2, 1.8, 7.6, 7.2, hair);
+      P(3.6, 2.2, 3, 1, shade(hair, 0.15), false);
+      P(5, 3.6, 0.5, 4.6, hairS, false); P(7.6, 3.4, 0.5, 5, hairS, false);
+      if (st === 'long') { P(4, 9, 0.5, 3.6, hairS, false); P(9.4, 9, 0.5, 3.6, hairS, false); }
+    } else {
+      if (st === 'long') { P(2.6, 3, 1.8, 9.5, hair); P(9.6, 3, 1.8, 9.5, hair); }
+      P(3.2, 1.8, 7.6, 2.6, hair);
+      P(3.2, 3.6, 1.2, 2.6, hair, false); P(9.6, 3.6, 1.2, 2.6, hair, false);
+      P(4.4, 4, 2.4, 0.8, hair, false);
+      P(4, 2.2, 3, 0.8, shade(hair, 0.18), false);
+    }
+    if (!look.cap) {
+      if (st === 'bun') P(5.4, -0.2, 3.2, 2.6, hair);
+      if (st === 'spiky') { P(3.6, 1, 1.2, 1.2, hair); P(5.8, 0.5, 1.2, 1.5, hair); P(8, 1, 1.2, 1.2, hair); }
+    }
+    if (look.headphones) {
+      P(3.2, 1.1, 7.6, 0.9, '#2b2b33');
+      P(2.1, 5, 1.6, 3, '#2b2b33'); P(10.3, 5, 1.6, 3, '#2b2b33');
+      P(2.4, 5.6, 1, 1.6, look.headphones, false); P(10.6, 5.6, 1, 1.6, look.headphones, false);
+    }
+  } else {
+    // вид сбоку (вправо; влево — зеркально)
+    const pS = shade(pants, -0.2);
+    if (!sit) {
+      P(6.6 - walk * 1.6, 16.5, 2.4, 5, pS); P(5.4 + walk * 1.6, 16.5, 2.4, 5, pants);
+      P(6.6 - walk * 1.6, 21.2, 3.2, 1.6, shoes); P(5.4 + walk * 1.6, 21.2, 3.2, 1.6, shoes);
+    }
+    P(4.4, 10, 5.6, 6.8, top);
+    P(4.4, 16.2, 5.6, 0.8, '#2a2433', false);
+    if (look.jacket) { P(9.2, 10, 0.8, 5.6, look.shirt || '#ffffff', false); if (look.tie) P(9.5, 10.4, 0.6, 4.4, look.tie, false); }
+    if (look.hood) P(4.4, 9.6, 2.6, 2, shade(top, -0.12), false);
+    P(6.2 + sw, 10.6, 1.9, 5, shade(top, -0.1)); P(6.2 + sw, 15.4, 1.9, 1.4, skin);
+    P(6.2, 9, 2, 1.4, skinS, false);
+    P(4, 2.6, 6.6, 6.8, skin);
+    P(10.5, 6.4, 0.7, 1.1, skin);
+    P(8.6, 6 + (1.4 - eh) / 2, 1, eh, '#1f1a2b', false);
+    P(8.4, 4.9, 1.4, 0.5, hairS, false);
+    P(9, 8.2, 1.2, 0.45, '#b5655a', false);
+    P(6, 5.6, 1, 1.6, skinS, false);
+    if (look.stubble) P(7.4, 7.7, 3, 1.5, 'rgba(70,45,30,.22)', false);
+    if (look.blush) P(8.4, 7.4, 1, 0.6, 'rgba(255,110,140,.45)', false);
+    if (look.glasses) { P(8, 5.5, 2.4, 0.4, '#222', false); P(8, 7.3, 2.4, 0.4, '#222', false); P(10.2, 5.5, 0.4, 2.2, '#222', false); P(6.4, 6, 1.8, 0.35, '#222', false); }
+    const st = look.hairStyle || 'short';
+    if (look.cap) {
+      P(3.6, 1.2, 7, 3.2, look.cap);
+      if (look.capBack) P(2, 3.6, 2.4, 0.9, shade(look.cap, -0.3)); else P(9.6, 3.6, 2.6, 0.9, shade(look.cap, -0.3));
+      P(3.6, 3.6, 2.4, 3, hair, false);
+    } else {
+      if (st === 'long') P(3.2, 3, 3, 9.5, hair);
+      P(3.6, 1.8, 6.8, 2.4, hair);
+      P(3.6, 3, 2.6, 4.6, hair, false);
+      P(9, 3.6, 1.4, 0.9, hair, false);
+      if (st === 'bun') P(3.4, 0, 3, 2.6, hair);
+      if (st === 'spiky') { P(4.4, 0.8, 1.4, 1.4, hair); P(6.6, 0.4, 1.4, 1.6, hair); P(8.6, 1, 1.2, 1.2, hair); }
+    }
+    if (look.headphones) { P(4.6, 1.1, 4.6, 0.9, '#2b2b33'); P(5.4, 5, 1.9, 3, '#2b2b33'); P(5.7, 5.6, 1.2, 1.6, look.headphones, false); }
   }
-  if (look.cap) { r(2.6, 0.4, 6.8, 2.2, look.cap); r(side >= 0 ? 4 : 1.6, 2.2, 6.4, 0.8, look.cap); }
   if (look.crown) {
-    r(3.6, -1.2, 4.8, 1.4, '#ffd23f');
-    r(3.6, -2.4, 1, 1.4, '#ffd23f'); r(5.5, -2.8, 1, 1.8, '#ffd23f'); r(7.4, -2.4, 1, 1.4, '#ffd23f');
-    r(5.7, -0.9, 0.6, 0.6, '#e74c3c');
+    P(4.2, -0.8, 5.6, 1.6, '#ffd23f');
+    P(4.2, -2, 1, 1.4, '#ffd23f'); P(6.5, -2.5, 1, 1.9, '#ffd23f'); P(8.8, -2, 1, 1.4, '#ffd23f');
+    P(6.6, -0.4, 0.8, 0.8, '#e74c3c', false); P(4.6, -0.5, 0.6, 0.6, '#5dade2', false); P(8.8, -0.5, 0.6, 0.6, '#5dade2', false);
   }
-  if (o.glow) {
-    const g = c.createRadialGradient(fx, oy + 6 * u, 2, fx, oy + 6 * u, 26);
-    g.addColorStop(0, o.glow); g.addColorStop(1, 'rgba(0,0,0,0)');
-    c.fillStyle = g; c.fillRect(fx - 26, oy - 20, 52, 52);
+  c.fillStyle = OUT;
+  for (const [x, y, w, h, , ol] of parts) if (ol) c.fillRect(ox + x * u - 1, oy + y * u - 1, w * u + 2, h * u + 2);
+  for (const [x, y, w, h, col] of parts) { c.fillStyle = col; c.fillRect(ox + x * u, oy + y * u, w * u, h * u); }
+  c.restore();
+}
+
+// Аватар (голова и плечи) для интерфейса
+const avatarCache = new Map();
+export function avatarURL(id, look, size = 64) {
+  const k = id + size;
+  if (avatarCache.has(k)) return avatarCache.get(k);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const c = cv.getContext('2d');
+  const s = size / 30;
+  c.scale(s, s);
+  drawChar(c, 15, 41, look, { dir: 'down', noShadow: true });
+  const url = cv.toDataURL();
+  avatarCache.set(k, url);
+  return url;
+}
+
+function drawCat(c, x, y, o) {
+  const f = o.dir === 'left' ? -1 : 1;
+  c.save();
+  c.translate(Math.round(x), Math.round(y));
+  c.scale(f, 1);
+  ellipse(c, 0, 0, 10, 3, 'rgba(0,0,0,.25)');
+  const orange = '#e8913a', dark = '#b8641e';
+  if (o.sleeping) {
+    box(c, -9, -8, 18, 8, orange); px(c, -9, -8, 18, 2, '#f3ae62');
+    box(c, 4, -11, 7, 6, orange);
+    px(c, 4, -13, 2, 2, orange); px(c, 9, -13, 2, 2, orange);
+    px(c, 6, -8, 3, 1, OUT);
+    px(c, -12, -3, 6, 3, dark);
+  } else {
+    const step = o.walking ? Math.sin(o.t * 14) * 1.5 : 0;
+    px(c, -7, -4 + step, 2, 4, dark); px(c, 4, -4 - step, 2, 4, dark);
+    box(c, -8, -11, 15, 7, orange); px(c, -8, -11, 15, 2, '#f3ae62');
+    px(c, -5, -11, 2, 7, dark); px(c, -1, -11, 2, 7, dark);
+    const tail = Math.sin(o.t * 3) * 3;
+    box(c, -12, -17 + tail, 3, 8 - tail, orange);
+    box(c, 4, -17, 9, 8, orange);
+    px(c, 4, -19, 3, 3, orange); px(c, 10, -19, 3, 3, orange); px(c, 5, -18, 1, 1, '#f7a1b0'); px(c, 11, -18, 1, 1, '#f7a1b0');
+    px(c, 9, -14, 1.5, 1.6, OUT); px(c, 12, -12, 1, 1, '#f7a1b0');
+  }
+  c.restore();
+}
+
+// ---------- экраны мониторов ----------
+const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash' };
+function drawScreen(c, x, y, w, h, kind, busy, t, seed) {
+  if (!kind) { px(c, x, y, w, h, '#0e1018'); px(c, x + 2, y + 2, 4, 1, 'rgba(255,255,255,.08)'); return; }
+  if (!busy) {
+    px(c, x, y, w, h, '#101426');
+    const bx = x + 2 + ((Math.sin(t * 0.7 + seed) + 1) / 2) * (w - 8), by = y + 2 + ((Math.cos(t * 0.9 + seed) + 1) / 2) * (h - 7);
+    px(c, bx, by, 4, 3, `hsl(${(t * 40 + seed * 50) % 360},70%,60%)`);
+    return;
+  }
+  const r = rng(seed * 97 + Math.floor(t * 2));
+  if (kind === 'code') {
+    px(c, x, y, w, h, '#14182a');
+    const off = Math.floor(t * 6) % 3;
+    for (let i = 0; i < 6; i++) {
+      const ly = y + 2 + i * 3 - off;
+      if (ly < y + 1 || ly > y + h - 2) continue;
+      const rr = rng(seed + i + Math.floor(t * 2));
+      const ind = Math.floor(rr() * 3) * 2;
+      px(c, x + 2 + ind, ly, 3 + rr() * 6, 1.4, ['#ff79c6', '#8be9fd', '#50fa7b', '#f1fa8c'][Math.floor(rr() * 4)]);
+      px(c, x + 7 + ind + rr() * 4, ly, rr() * 7, 1.4, '#c8cbe0');
+    }
+    if (Math.sin(t * 8) > 0) px(c, x + w - 6, y + h - 4, 1, 2, '#fff');
+  } else if (kind === 'search') {
+    px(c, x, y, w, h, '#f4f6fb');
+    px(c, x + 3, y + 2, w - 6, 3, '#dfe4ef'); px(c, x + 4, y + 3, 6 + ((t * 8) % 8), 1, '#7a8199');
+    for (let i = 0; i < 3; i++) { px(c, x + 3, y + 7 + i * 3.5, 9, 1.2, '#3b6fe0'); px(c, x + 3, y + 8.6 + i * 3.5, 6 + r() * 10, 0.9, '#9aa1b5'); }
+  } else if (kind === 'browser') {
+    px(c, x, y, w, h, '#ffffff');
+    px(c, x, y, w, 3, '#d9dde7'); px(c, x + 2, y + 1, 2, 1, '#ff5f56'); px(c, x + 5, y + 1, 2, 1, '#ffbd2e');
+    px(c, x + 2, y + 5, w - 4, 4, '#4b7bec'); px(c, x + 2, y + 10, (w - 6) / 2, 6, '#dfe6f5'); px(c, x + w / 2 + 1, y + 10, (w - 6) / 2, 6, '#dfe6f5');
+    const cx = x + 4 + ((Math.sin(t * 1.3) + 1) / 2) * (w - 8), cy = y + 6 + ((Math.cos(t * 1.7) + 1) / 2) * (h - 9);
+    px(c, cx, cy, 1.5, 2.5, '#111');
+  } else if (kind === 'doc') {
+    px(c, x, y, w, h, '#fffaf0');
+    px(c, x + 3, y + 2, 10, 1.6, '#e84393');
+    for (let i = 0; i < 4; i++) px(c, x + 3, y + 6 + i * 3, i === 3 ? ((t * 6) % (w - 6)) : w - 6 - (i % 2) * 5, 1, '#6b6478');
+    px(c, x + w - 8, y + 2, 5, 3, '#ffeaa7');
+  } else {
+    px(c, x, y, w, h, '#151a2c');
+    for (let i = 0; i < 5; i++) { const bh = 3 + ((Math.sin(t * 1.5 + i * 1.3) + 1) / 2) * (h - 8); px(c, x + 3 + i * 4, y + h - 2 - bh, 3, bh, i % 2 ? '#ffd23f' : '#5dade2'); }
   }
 }
 
@@ -154,7 +364,8 @@ const GLYPHS = {
   nika: ['∑', '✎', 'π', 'A+', '√x', '📐'],
   mirik: ['📣', '✔', '💼', '📊'],
 };
-const GLOW = { timur: 'rgba(80,200,255,.35)', liza: 'rgba(190,120,255,.35)', borya: 'rgba(90,255,150,.3)', nika: 'rgba(255,120,200,.32)', mirik: 'rgba(255,210,80,.35)' };
+const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80' };
+const EMPTY_DESKS = [{ x: 10, y: 4 }, { x: 10, y: 8 }];
 
 export class Office {
   constructor(canvas, { onSelect } = {}) {
@@ -163,58 +374,175 @@ export class Office {
     this.agents = new Map();
     this.particles = [];
     this.selected = null;
+    this.follow = null;
     this.hover = null;
     this.onSelect = onSelect;
     this.running = 0;
+    this.done = 0;
     this.t = 0;
     this.last = performance.now();
+    this.cam = { x: WW / 2, y: WH / 2, z: 1 };
+    this.camT = { ...this.cam };
+    for (const d of EMPTY_DESKS) this.addDesk(null, d.x, d.y, 2);
+    this.cat = { id: 'cat', isCat: true, x: tileFeet(12, 14).x, y: tileFeet(12, 14).y, plan: [], path: [], dir: 'right', name: 'Барсик' };
+    this.bindInput();
+    new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     this.resize();
-    addEventListener('resize', () => this.resize());
-    canvas.addEventListener('mousemove', (e) => {
-      this.hover = this.hit(e);
-      canvas.style.cursor = this.hover ? 'pointer' : 'default';
-    });
-    canvas.addEventListener('click', (e) => {
-      const a = this.hit(e);
-      this.selected = a?.id || null;
-      this.onSelect?.(this.selected);
-    });
     requestAnimationFrame((n) => this.frame(n));
   }
 
-  resize() {
-    const box = this.cv.parentElement.getBoundingClientRect();
-    const dpr = devicePixelRatio || 1;
-    this.scale = Math.min(box.width / (W * T), box.height / (H * T));
-    this.cv.style.width = W * T * this.scale + 'px';
-    this.cv.style.height = H * T * this.scale + 'px';
-    this.cv.width = Math.round(W * T * this.scale * dpr);
-    this.cv.height = Math.round(H * T * this.scale * dpr);
-    this.px = this.scale * dpr;
-    this.bg = null;
+  addDesk(owner, x, y, w) {
+    const ex = furniture.find((f) => f.kind === 'desk' && f.x === x && f.y === y);
+    if (ex) { ex.owner = owner; return ex; }
+    const boss = owner === 'mirik';
+    const desk = add('desk', x, y, w, 1, { owner, boss });
+    if (!boss) furniture.push({ kind: 'chair', x, y, w: 0, h: 0, cx: (x + 1) * T, cy: (y + 1) * T + 14, walkable: true, owner });
+    else furniture.push({ kind: 'bosschair', x, y, w: 0, h: 0, cx: (x + w / 2) * T, cy: y * T + 5, walkable: true, owner });
+    return desk;
   }
 
-  hit(e) {
-    const r = this.cv.getBoundingClientRect();
-    const x = (e.clientX - r.left) / this.scale, y = (e.clientY - r.top) / this.scale;
+  // ---------- камера ----------
+  resize() {
+    const box = this.cv.parentElement.getBoundingClientRect();
+    this.vw = Math.max(1, box.width);
+    this.vh = Math.max(1, box.height);
+    this.dpr = devicePixelRatio || 1;
+    this.cv.width = Math.round(this.vw * this.dpr);
+    this.cv.height = Math.round(this.vh * this.dpr);
+    this.cv.style.width = this.vw + 'px';
+    this.cv.style.height = this.vh + 'px';
+    const fitBoth = Math.min(this.vw / WW, this.vh / WH);
+    this.minZ = fitBoth * 0.95;
+    this.maxZ = Math.max(2.6, fitBoth * 4);
+    if (!this.userMoved) this.fit();
+  }
+
+  fit() {
+    const fitBoth = Math.min(this.vw / WW, this.vh / WH);
+    const narrow = this.vw / this.vh < (WW / WH) * 0.8;
+    const z = narrow ? Math.min(this.vh / WH, fitBoth * 1.9) : fitBoth;
+    this.camT = { x: narrow ? 8.5 * T : WW / 2, y: WH / 2, z };
+    this.follow = null;
+    this.userMoved = false;
+  }
+
+  zoomBy(k, sx = this.vw / 2, sy = this.vh / 2) {
+    const before = this.toWorld(sx, sy, this.camT);
+    this.camT.z = Math.max(this.minZ, Math.min(this.maxZ, this.camT.z * k));
+    const after = this.toWorld(sx, sy, this.camT);
+    this.camT.x += before.x - after.x;
+    this.camT.y += before.y - after.y;
+    this.userMoved = true;
+  }
+
+  clampCam(cam) {
+    const hw = this.vw / 2 / cam.z, hh = this.vh / 2 / cam.z;
+    cam.x = WW < hw * 2 ? WW / 2 : Math.max(hw - 20, Math.min(WW - hw + 20, cam.x));
+    cam.y = WH < hh * 2 ? WH / 2 : Math.max(hh - 20, Math.min(WH - hh + 20, cam.y));
+  }
+
+  toWorld(sx, sy, cam = this.cam) { return { x: (sx - this.vw / 2) / cam.z + cam.x, y: (sy - this.vh / 2) / cam.z + cam.y }; }
+  toScreen(wx, wy) { return { x: (wx - this.cam.x) * this.cam.z + this.vw / 2, y: (wy - this.cam.y) * this.cam.z + this.vh / 2 }; }
+
+  focus(id, zoom = true) {
+    const a = id === 'cat' ? this.cat : this.agents.get(id);
+    if (!a) return;
+    this.selected = id === 'cat' ? null : id;
+    this.follow = id;
+    if (zoom) this.camT.z = Math.max(this.camT.z, Math.min(this.maxZ, Math.min(this.vw / WW, this.vh / WH) * 2.2));
+    this.userMoved = true;
+  }
+
+  bindInput() {
+    const cv = this.cv;
+    const pts = new Map();
+    let drag = null, pinch = null, moved = false;
+    const local = (e) => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    cv.addEventListener('pointerdown', (e) => {
+      cv.setPointerCapture(e.pointerId);
+      pts.set(e.pointerId, local(e));
+      moved = false;
+      if (pts.size === 1) drag = { ...local(e), cx: this.camT.x, cy: this.camT.y };
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: this.camT.z };
+        drag = null;
+      }
+    });
+    cv.addEventListener('pointermove', (e) => {
+      const p = local(e);
+      if (!pts.has(e.pointerId)) {
+        this.hover = this.hit(p.x, p.y);
+        cv.style.cursor = this.hover ? 'pointer' : 'grab';
+        return;
+      }
+      pts.set(e.pointerId, p);
+      if (pinch && pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const k = (pinch.z * (d / pinch.d)) / this.camT.z;
+        this.zoomBy(k, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        moved = true;
+      } else if (drag) {
+        const dx = p.x - drag.x, dy = p.y - drag.y;
+        if (Math.hypot(dx, dy) > 6) moved = true;
+        if (moved) {
+          this.follow = null;
+          this.camT.x = drag.cx - dx / this.camT.z;
+          this.camT.y = drag.cy - dy / this.camT.z;
+          this.userMoved = true;
+          cv.style.cursor = 'grabbing';
+        }
+      }
+    });
+    const up = (e) => {
+      const p = pts.get(e.pointerId);
+      pts.delete(e.pointerId);
+      if (pts.size < 2) pinch = null;
+      if (pts.size === 0) {
+        if (!moved && p) {
+          const a = this.hit(p.x, p.y);
+          if (a === this.cat) { this.say(this.cat, 'мяу 🐾', 1500); return; }
+          this.selected = a?.id || null;
+          if (a) this.follow = a.id;
+          this.onSelect?.(this.selected);
+        }
+        drag = null;
+        cv.style.cursor = 'grab';
+      }
+    };
+    cv.addEventListener('pointerup', up);
+    cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const p = local(e);
+      this.zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018)), p.x, p.y);
+    }, { passive: false });
+    cv.addEventListener('dblclick', (e) => { const p = local(e); this.zoomBy(1.7, p.x, p.y); });
+  }
+
+  hit(sx, sy) {
+    const { x, y } = this.toWorld(sx, sy);
     let best = null;
-    for (const a of this.agents.values()) {
-      if (Math.abs(x - a.x) < 14 && y < a.y + 4 && y > a.y - 44) if (!best || a.y > best.y) best = a;
+    for (const a of [...this.agents.values(), this.cat]) {
+      const top = a.isCat ? 22 : a.sitting ? 34 : 48;
+      if (Math.abs(x - a.x) < 15 && y < a.y + 5 && y > a.y - top) if (!best || a.y > best.y) best = a;
     }
     return best;
   }
 
+  // ---------- агенты ----------
   setAgents(list) {
     for (const def of list) {
       let a = this.agents.get(def.id);
       if (!a) {
-        const w = def.id === 'mirik' ? 3 : 2;
-        const seatTile = { x: def.desk.x + Math.floor(w / 2), y: def.desk.y - 1 };
-        const seat = { x: (def.desk.x + w / 2) * T - (w === 2 ? 8 : 0), y: def.desk.y * T + 8 };
-        a = { ...def, w, seatTile, seat, x: seat.x, y: seat.y, path: [], plan: [], sitting: true, dir: 'down', bubble: null, nextGlyph: 0, blinkAt: Math.random() * 4 };
+        const boss = def.id === 'mirik';
+        const w = boss ? 3 : 2;
+        this.addDesk(def.id, def.desk.x, def.desk.y, w);
+        const seatTile = boss ? { x: def.desk.x + 1, y: def.desk.y - 1 } : { x: def.desk.x, y: def.desk.y + 1 };
+        const seat = boss ? { x: (def.desk.x + w / 2) * T, y: def.desk.y * T + 6, dir: 'down' } : { x: (def.desk.x + 1) * T, y: (def.desk.y + 1) * T + 14, dir: 'up' };
+        a = { ...def, boss, w, seatTile, seat, x: seat.x, y: seat.y, path: [], plan: [], sitting: true, dir: seat.dir, bubble: null, nextGlyph: 0, blinkAt: Math.random() * 4 };
         this.agents.set(def.id, a);
-        furniture.push({ kind: 'desk', x: def.desk.x, y: def.desk.y, w, h: 1, owner: def.id });
-        block(def.desk.x, def.desk.y, w, 1);
       }
       this.applyState(def.state);
     }
@@ -227,24 +555,29 @@ export class Office {
     a.status = s.status;
     a.activity = s.activity;
     a.busy = s.status !== 'idle';
-    if (wasBusy !== a.busy && !a.plan.some((p) => p.priority)) a.plan = [];
+    if (wasBusy !== a.busy) {
+      if (!a.plan.some((p) => p.priority)) a.plan = [];
+      if (a.busy && !wasBusy) this.emote(a, '❗');
+    }
   }
 
   delegate(from, to, text) {
     const boss = this.agents.get(from), a = this.agents.get(to);
     if (!a || !boss) return;
     this.say(boss, `${a.name}, на тебе: ${text}`, 5000);
+    const spot = { x: 18 + Math.floor(Math.random() * 3), y: 5 };
     a.plan = [
-      { type: 'goto', tile: { x: 19, y: 5 }, priority: true },
+      { type: 'goto', tile: spot, priority: true, run: true },
       { type: 'face', dir: 'up', priority: true },
-      { type: 'say', text: 'Есть, босс! 🫡', ms: 1600, priority: true },
-      { type: 'wait', ms: 1400, priority: true },
+      { type: 'say', text: 'Есть, босс! 🫡', ms: 1800, priority: true },
+      { type: 'wait', ms: 1500, priority: true },
     ];
   }
 
   report(from) {
     const a = this.agents.get(from);
     if (!a || from === 'mirik') return;
+    this.confetti(a);
     a.plan = [
       { type: 'goto', tile: { x: 18 + Math.floor(Math.random() * 3), y: 5 }, priority: true },
       { type: 'face', dir: 'up', priority: true },
@@ -254,27 +587,42 @@ export class Office {
     setTimeout(() => this.say(this.agents.get('mirik'), 'Отлично, спасибо! 👍', 2200), 900);
   }
 
-  say(a, text, ms = 3000) {
-    if (a) a.bubble = { text, until: this.t + ms / 1000 };
+  taskDone(agentId) { const a = this.agents.get(agentId); if (a) this.confetti(a); }
+
+  say(a, text, ms = 3000) { if (a) a.bubble = { text, until: this.t + ms / 1000 }; }
+  emote(a, icon) { a.emote = { icon, until: this.t + 1.6 }; }
+
+  confetti(a) {
+    for (let i = 0; i < 28; i++) {
+      this.particles.push({ type: 'confetti', x: a.x, y: a.y - 40, vx: (Math.random() - 0.5) * 120, vy: -60 - Math.random() * 90, born: this.t, life: 1.6, color: ['#ffd23f', '#ff6b6b', '#5dade2', '#2ecc71', '#e84393'][i % 5] });
+    }
   }
 
   think(a) {
-    if (a.busy) {
-      a.plan = [{ type: 'goto', tile: a.seatTile }, { type: 'sit', ms: Infinity }];
+    if (a.isCat) {
+      if (Math.random() < 0.35) a.plan = [{ type: 'goto', tile: { x: 12, y: 14 } }, { type: 'sit', at: { x: 12.5 * T, y: 15 * T + 18 }, ms: 15000 + Math.random() * 20000, sleep: true }];
+      else {
+        const s = CAT_SPOTS[Math.floor(Math.random() * CAT_SPOTS.length)];
+        a.plan = [{ type: 'goto', tile: s }, { type: 'wait', ms: 3000 + Math.random() * 6000 }];
+      }
       return;
     }
-    const pois = POIS.filter((p) => p.who === 'all' || (a.id === 'mirik' ? p.who === 'mirik' : p.who === 'staff'));
-    if (Math.random() < 0.45) {
+    a.poi = null;
+    if (a.busy) {
+      a.plan = [{ type: 'goto', tile: a.seatTile }, { type: 'sit', at: a.seat, dir: a.seat.dir, ms: Infinity }];
+      return;
+    }
+    const taken = new Set([...this.agents.values()].map((x) => x.poi).filter(Boolean));
+    const pois = POIS.filter((p) => !taken.has(p) && (p.who === 'all' || (a.boss ? p.who === 'mirik' : p.who === 'staff')));
+    if (Math.random() < 0.5 && pois.length) {
       const p = pois[Math.floor(Math.random() * pois.length)];
-      a.plan = [
-        { type: 'goto', tile: p },
-        { type: 'say', text: p.say, ms: 2500 },
-        { type: 'wait', ms: 3000 + Math.random() * 5000 },
-        { type: 'goto', tile: a.seatTile },
-        { type: 'sit', ms: 6000 + Math.random() * 10000 },
-      ];
+      a.poi = p;
+      a.plan = [{ type: 'goto', tile: p }, { type: 'face', dir: p.dir }, { type: 'say', text: p.say, ms: 2600 }];
+      if (p.sit) a.plan.push({ type: 'sit', at: p.sit, dir: 'down', ms: 6000 + Math.random() * 6000 });
+      else a.plan.push({ type: 'wait', ms: 3500 + Math.random() * 5000 });
+      a.plan.push({ type: 'goto', tile: a.seatTile }, { type: 'sit', at: a.seat, dir: a.seat.dir, ms: 6000 + Math.random() * 12000 });
     } else {
-      a.plan = [{ type: 'goto', tile: a.seatTile }, { type: 'sit', ms: 5000 + Math.random() * 9000 }];
+      a.plan = [{ type: 'goto', tile: a.seatTile }, { type: 'sit', at: a.seat, dir: a.seat.dir, ms: 5000 + Math.random() * 9000 }];
     }
   }
 
@@ -284,55 +632,53 @@ export class Office {
     if (!act) return;
     switch (act.type) {
       case 'goto': {
-        a.sitting = false;
         if (!act.started) {
           act.started = true;
-          const sx = Math.floor(a.x / T), sy = Math.floor(a.y / T - 0.25);
-          a.path = findPath(free(sx, sy) ? sx : a.seatTile.x, free(sx, sy) ? sy : a.seatTile.y, act.tile.x, act.tile.y).map(([x, y]) => tileFeet(x, y));
-          if (!free(sx, sy)) a.path.unshift(tileFeet(a.seatTile.x, a.seatTile.y));
+          const wasSeat = a.sittingAt;
+          a.sitting = false;
+          a.sittingAt = null;
+          const [sx, sy] = nearestFree(a.x, a.y);
+          a.path = findPath(sx, sy, act.tile.x, act.tile.y).map(([x, y]) => tileFeet(x, y));
+          if (wasSeat || !free(Math.floor(a.x / T), Math.floor(a.y / T - 0.25))) a.path.unshift(tileFeet(sx, sy));
         }
-        if (this.moveAlong(a, dt)) a.plan.shift();
+        if (this.moveAlong(a, dt, act.run ? 1.5 : 1)) a.plan.shift();
         break;
       }
       case 'sit': {
-        const dx = a.seat.x - a.x, dy = a.seat.y - a.y;
-        const d = Math.hypot(dx, dy);
+        const dx = act.at.x - a.x, dy = act.at.y - a.y, d = Math.hypot(dx, dy);
         if (d > 1) {
-          const s = Math.min(d, 90 * dt);
+          const s = Math.min(d, 70 * dt);
           a.x += (dx / d) * s; a.y += (dy / d) * s;
+          a.walking = true;
           return;
         }
+        a.walking = false;
         a.sitting = true;
-        a.dir = 'down';
+        a.sleeping = !!act.sleep;
+        a.sittingAt = act.at;
+        if (act.dir) a.dir = act.dir;
         act.left = (act.left ?? act.ms) - dt * 1000;
-        if (act.left <= 0) a.plan.shift();
+        if (act.left <= 0) { a.plan.shift(); a.sleeping = false; }
         break;
       }
       case 'wait':
+        a.walking = false;
         act.left = (act.left ?? act.ms) - dt * 1000;
         if (act.left <= 0) a.plan.shift();
         break;
-      case 'say':
-        this.say(a, act.text, act.ms);
-        a.plan.shift();
-        break;
-      case 'face':
-        a.dir = act.dir;
-        a.plan.shift();
-        break;
+      case 'say': this.say(a, act.text, act.ms); a.plan.shift(); break;
+      case 'face': a.dir = act.dir; a.plan.shift(); break;
     }
   }
 
-  moveAlong(a, dt) {
+  moveAlong(a, dt, k = 1) {
     const target = a.path[0];
     if (!target) { a.walking = false; return true; }
-    const dx = target.x - a.x, dy = target.y - a.y;
-    const d = Math.hypot(dx, dy);
-    const speed = 78 * dt;
+    const dx = target.x - a.x, dy = target.y - a.y, d = Math.hypot(dx, dy);
+    const speed = (a.isCat ? 55 : 80) * k * dt;
     a.walking = true;
-    a.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
-    if (d <= speed) { a.x = target.x; a.y = target.y; a.path.shift(); }
-    else { a.x += (dx / d) * speed; a.y += (dy / d) * speed; }
+    if (d > 0.5) a.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
+    if (d <= speed) { a.x = target.x; a.y = target.y; a.path.shift(); } else { a.x += (dx / d) * speed; a.y += (dy / d) * speed; }
     if (!a.path.length) { a.walking = false; return true; }
     return false;
   }
@@ -343,292 +689,557 @@ export class Office {
     this.t += dt;
     for (const a of this.agents.values()) {
       this.step(a, dt);
-      if (a.busy && a.sitting && this.t > a.nextGlyph) {
-        a.nextGlyph = this.t + 0.5 + Math.random() * 0.6;
+      if (a.busy && a.sittingAt === a.seat && this.t > a.nextGlyph) {
+        a.nextGlyph = this.t + 0.6 + Math.random() * 0.7;
         const g = GLYPHS[a.id] || GLYPHS.timur;
-        this.particles.push({ x: a.seat.x + (Math.random() - 0.5) * 30, y: a.seat.y - 6, text: g[Math.floor(Math.random() * g.length)], born: this.t, color: GLOW[a.id] });
+        this.particles.push({ type: 'glyph', x: a.seat.x + (Math.random() - 0.5) * 26, y: a.seat.y - (a.boss ? 34 : 40), text: g[Math.floor(Math.random() * g.length)], born: this.t, life: 2 });
       }
     }
-    this.particles = this.particles.filter((p) => this.t - p.born < 2.2);
+    this.step(this.cat, dt);
+    for (const p of this.particles) if (p.type === 'confetti') { p.vy += 220 * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+    this.particles = this.particles.filter((p) => this.t - p.born < p.life);
+    // камера
+    if (this.follow) {
+      const f = this.follow === 'cat' ? this.cat : this.agents.get(this.follow);
+      if (f) { this.camT.x = f.x; this.camT.y = f.y - 20; }
+    }
+    this.clampCam(this.camT);
+    const k = 1 - Math.pow(0.0015, dt);
+    this.cam.x += (this.camT.x - this.cam.x) * k;
+    this.cam.y += (this.camT.y - this.cam.y) * k;
+    this.cam.z += (this.camT.z - this.cam.z) * k;
     this.draw();
     requestAnimationFrame((n) => this.frame(n));
   }
 
-  // ---------- отрисовка ----------
-  sky() {
-    const h = new Date().getHours() + new Date().getMinutes() / 60;
-    if (h < 5 || h >= 21) return { top: '#0b1030', bot: '#1d2550', night: true };
-    if (h < 7) return { top: '#3b4a8a', bot: '#f6a26b' };
-    if (h < 18) return { top: '#5fb6f2', bot: '#bfe6ff' };
-    return { top: '#4b3d8f', bot: '#ff8a5b' };
+  // ---------- время суток ----------
+  daylight() {
+    const d = new Date();
+    const h = d.getHours() + d.getMinutes() / 60;
+    const dark = h < 5 || h >= 21 ? 0.5 : h < 7 ? 0.5 - (h - 5) * 0.25 : h < 17 ? 0 : h < 21 ? (h - 17) * 0.125 : 0.5;
+    let sky;
+    if (h < 5 || h >= 21) sky = ['#0b1030', '#1d2550'];
+    else if (h < 7) sky = ['#3b4a8a', '#f6a26b'];
+    else if (h < 17) sky = ['#5fb6f2', '#cdeeff'];
+    else if (h < 19) sky = ['#5a6fc0', '#ffb36b'];
+    else sky = ['#2c2f6b', '#e0705b'];
+    return { dark, sky, night: dark >= 0.35, h };
   }
 
+  // ---------- статичный фон ----------
   drawBackground() {
+    const S = 2;
     const cv = document.createElement('canvas');
-    cv.width = W * T; cv.height = H * T;
+    cv.width = WW * S; cv.height = WH * S;
     const c = cv.getContext('2d');
-    const sky = this.sky();
-    // пол open space — доски
+    c.scale(S, S);
+    const r = rng(42);
     for (let y = 2; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const X = x * T, Y = y * T;
       const office = x >= 16 && y <= 6;
+      const meeting = x >= 16 && y >= 8 && y <= 11;
       const kitchen = x >= 16 && y >= 12;
-      if (office) c.fillStyle = (x + y) % 2 ? '#4a3355' : '#523a5e';
-      else if (kitchen) c.fillStyle = (x + y) % 2 ? '#e9e4da' : '#d8d1c4';
-      else c.fillStyle = ((y % 2 ? x + 1 : x) >> 1) % 2 ? '#a77b55' : '#b3875f';
-      c.fillRect(x * T, y * T, T, T);
-      if (!office && !kitchen) { c.fillStyle = 'rgba(0,0,0,.08)'; c.fillRect(x * T, y * T + T - 2, T, 2); }
+      if (office) {
+        px(c, X, Y, T, T, '#4a3658');
+        for (let i = 0; i < 6; i++) px(c, X + r() * T, Y + r() * T, 1, 1, 'rgba(255,255,255,.06)');
+      } else if (meeting) {
+        px(c, X, Y, T, T, (x + y) % 2 ? '#3e4a5e' : '#435064');
+        px(c, X, Y, T, 1, 'rgba(0,0,0,.12)'); px(c, X, Y, 1, T, 'rgba(0,0,0,.12)');
+      } else if (kitchen) {
+        px(c, X, Y, T, T, '#7a7f8c');
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) px(c, X + i * 16 + 1, Y + j * 16 + 1, 15, 15, (i + j + x + y) % 2 ? '#eae6dc' : '#d9d2c3');
+      } else {
+        for (let p = 0; p < 4; p++) {
+          const py = Y + p * 8;
+          const base = 160 + Math.floor(r() * 18);
+          c.fillStyle = `rgb(${base + 8},${Math.floor(base * 0.73)},${Math.floor(base * 0.5)})`;
+          c.fillRect(X, py, T, 8);
+          px(c, X, py + 7, T, 1, 'rgba(60,30,10,.25)');
+          const seam = ((y * 4 + p) * 13 + x * 32) % 64;
+          if (seam < 32) px(c, X + seam, py, 1, 7, 'rgba(60,30,10,.22)');
+          px(c, X + r() * T, py + 2 + r() * 4, 4 + r() * 8, 1, 'rgba(90,50,20,.12)');
+        }
+      }
     }
-    // ковёр в open space
-    c.fillStyle = '#3f6b75'; c.fillRect(2 * T, 7 * T + 8, 10 * T, 1 * T + 16);
-    c.fillStyle = '#4f818c'; c.fillRect(2 * T + 6, 7 * T + 14, 10 * T - 12, T + 4);
-    // ковёр у Мирика
-    c.fillStyle = '#7b2d43'; c.fillRect(17 * T, 3 * T - 6, 5 * T, 3 * T);
-    c.strokeStyle = '#e0b04a'; c.lineWidth = 2; c.strokeRect(17 * T + 4, 3 * T - 2, 5 * T - 8, 3 * T - 8);
-    // стены
+    // стены сверху
     for (let x = 0; x < W; x++) {
-      c.fillStyle = x >= 15 ? '#3a3350' : '#e8dcc6'; c.fillRect(x * T, 0, T, 2 * T);
-      c.fillStyle = x >= 15 ? '#2a2440' : '#cbbd9f'; c.fillRect(x * T, 2 * T - 6, T, 6);
+      const boss = x >= 15;
+      const X = x * T;
+      px(c, X, 0, T, 46, boss ? '#3d3456' : '#ece2cf');
+      px(c, X, 0, T, 4, boss ? '#2c2540' : '#d9cdb5');
+      px(c, X, 46, T, 12, boss ? '#2f2845' : '#b98e63');
+      px(c, X + 15, 47, 1, 10, 'rgba(0,0,0,.18)');
+      px(c, X, 46, T, 1, 'rgba(255,255,255,.18)');
+      px(c, X, 58, T, 6, boss ? '#211c33' : '#7a5636');
     }
-    c.fillStyle = '#2b2b3a';
-    c.fillRect(0, 2 * T, T, H * T); c.fillRect((W - 1) * T, 2 * T, T, H * T);
-    c.fillStyle = '#3b3a4f'; c.fillRect(T - 6, 2 * T, 6, (H - 3) * T); c.fillRect((W - 1) * T, 2 * T, 6, (H - 3) * T);
-    c.fillStyle = '#2b2b3a';
-    c.fillRect(0, 0, 6, H * T); c.fillRect(W * T - 6, 0, 6, H * T); c.fillRect(0, (H - 1) * T + 20, W * T, 12);
-    c.fillStyle = '#efe6d4'; c.fillRect(6, (H - 1) * T, W * T - 12, 20);
-    // окна
-    const win = (x, w) => {
-      const g = c.createLinearGradient(0, 8, 0, 52);
-      g.addColorStop(0, sky.top); g.addColorStop(1, sky.bot);
-      c.fillStyle = '#5b4a3a'; c.fillRect(x - 3, 5, w + 6, 50);
-      c.fillStyle = g; c.fillRect(x, 8, w, 44);
-      if (sky.night) { c.fillStyle = '#fff'; for (let i = 0; i < 6; i++) c.fillRect(x + ((i * 37) % w), 12 + ((i * 17) % 30), 2, 2); c.fillStyle = '#f4f1c9'; c.beginPath(); c.arc(x + w - 14, 20, 6, 0, 7); c.fill(); }
-      else { c.fillStyle = 'rgba(255,255,255,.85)'; c.fillRect(x + 8, 18, 22, 6); c.fillRect(x + 14, 14, 12, 6); }
-      c.fillStyle = '#2b3b52'; c.fillRect(x, 40, w, 12);
-      for (let i = 0; i < w; i += 9) { c.fillStyle = '#3c5272'; c.fillRect(x + i, 30 + ((i * 7) % 10), 7, 22); c.fillStyle = sky.night ? '#ffd86b' : '#9fb7d4'; c.fillRect(x + i + 2, 36 + ((i * 7) % 10), 2, 2); }
-      c.fillStyle = '#5b4a3a'; c.fillRect(x + w / 2 - 1, 8, 3, 44);
-    };
-    win(2 * T, 2 * T); win(7 * T + 16, 2 * T); win(11 * T, 2 * T - 8); win(16 * T + 8, T + 16); win(19 * T + 8, T + 8);
-    // стеклянная стена кабинета
-    c.fillStyle = 'rgba(170,220,255,.18)';
-    c.fillRect(15 * T + 10, 2 * T, 12, 6 * T);
-    c.fillStyle = 'rgba(200,235,255,.55)'; c.fillRect(15 * T + 10, 2 * T, 2, 6 * T); c.fillRect(15 * T + 20, 2 * T, 2, 6 * T);
-    // табличка
-    c.fillStyle = '#e0b04a'; c.fillRect(19 * T - 22, 7 * T + 4, 12, 0);
+    const g = c.createLinearGradient(0, 64, 0, 78);
+    g.addColorStop(0, 'rgba(0,0,0,.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g; c.fillRect(T, 64, WW - 2 * T, 14);
+    // боковые и нижняя стены
+    px(c, 0, 2 * T, T, WH, '#2a2638'); px(c, T - 6, 2 * T, 6, (H - 3) * T, '#3d3852');
+    px(c, (W - 1) * T, 2 * T, T, WH, '#2a2638'); px(c, (W - 1) * T, 2 * T, 6, (H - 3) * T, '#3d3852');
+    px(c, 0, (H - 1) * T, WW, T, '#2a2638'); px(c, T, (H - 1) * T, WW - 2 * T, 6, '#3d3852');
+    // картины / постеры
+    box(c, 13 * T + 34, 10, 22, 28, '#ffffff'); px(c, 13 * T + 37, 13, 16, 16, '#5dade2'); px(c, 13 * T + 40, 20, 10, 6, '#ffd23f'); px(c, 13 * T + 37, 31, 16, 3, '#333');
+    box(c, 18 * T + 12, 14, 26, 20, '#e0b04a'); px(c, 18 * T + 15, 17, 20, 14, '#1c2740'); px(c, 18 * T + 19, 21, 12, 2, '#e0b04a'); px(c, 18 * T + 19, 25, 8, 2, '#e0b04a');
     this.bg = cv;
-    this.bgHour = new Date().getHours();
   }
 
+  // окна, доска, часы — меняются со временем
+  drawWall(c, day) {
+    const wins = [[1 * T + 12, 2 * T + 8], [7 * T + 4, 2 * T], [10 * T + 28, 2 * T - 8], [16 * T + 6, 2 * T - 6], [19 * T + 14, T + 22]];
+    for (const [x, w] of wins) {
+      box(c, x - 3, 6, w + 6, 42, '#6b5340');
+      c.save();
+      c.beginPath(); c.rect(x, 9, w, 34); c.clip();
+      const g = c.createLinearGradient(0, 9, 0, 43);
+      g.addColorStop(0, day.sky[0]); g.addColorStop(1, day.sky[1]);
+      c.fillStyle = g; c.fillRect(x, 9, w, 34);
+      if (day.night) {
+        for (let i = 0; i < 8; i++) px(c, x + ((i * 29 + x) % w), 11 + ((i * 13) % 14), 1, 1, Math.sin(this.t * 2 + i) > 0.6 ? '#fff' : 'rgba(255,255,255,.5)');
+        ellipse(c, x + w - 12, 17, 4, 4, '#f4f1c9');
+      } else {
+        for (let i = 0; i < 2; i++) {
+          const cx = x + ((this.t * (4 + i * 2) + i * 37 + x) % (w + 40)) - 20;
+          ellipse(c, cx, 15 + i * 6, 9, 3, 'rgba(255,255,255,.9)'); ellipse(c, cx + 6, 13 + i * 6, 6, 3, 'rgba(255,255,255,.9)');
+        }
+      }
+      for (let i = 0; i < w; i += 8) {
+        const bh = 10 + ((i * 7 + x) % 14);
+        px(c, x + i, 43 - bh, 7, bh, day.night ? '#1f2846' : '#5a7090');
+        for (let j = 0; j < bh - 3; j += 4) px(c, x + i + 2, 43 - bh + 2 + j, 2, 2, day.night ? (((i + j + x) % 3) ? '#ffd86b' : '#2b3558') : '#9fb7d4');
+      }
+      c.restore();
+      px(c, x + w / 2 - 1, 9, 3, 34, '#6b5340');
+      px(c, x, 25, w, 2, '#6b5340');
+      px(c, x - 5, 46, w + 10, 4, '#8a6c52');
+      px(c, x - 6, 6, 5, 40, 'rgba(220,90,80,.85)'); px(c, x + w + 1, 6, 5, 40, 'rgba(220,90,80,.85)');
+    }
+    // доска задач
+    const bx = 4 * T + 6, by = 8;
+    box(c, bx, by, 2 * T + 22, 40, '#f7f7f2', { outline: '#8a8f99' });
+    px(c, bx, by + 40, 2 * T + 22, 3, '#8a8f99');
+    c.font = '700 8px Inter, sans-serif'; c.textAlign = 'left';
+    c.fillStyle = '#c0392b'; c.fillText('ЗАДАЧИ', bx + 4, by + 10);
+    c.fillStyle = '#2c3e50'; c.fillText(`в работе: ${this.running}`, bx + 4, by + 21);
+    c.fillStyle = '#27ae60'; c.fillText(`готово: ${this.done}`, bx + 4, by + 32);
+    px(c, bx + 2 * T, by + 4, 16, 14, '#ffeaa7'); px(c, bx + 2 * T + 2, by + 22, 14, 13, '#81ecec');
+    // часы
+    const d = new Date(), cx = 9 * T + 26, cy = 24;
+    ellipse(c, cx, cy, 10, 10, OUT); ellipse(c, cx, cy, 9, 9, '#fff');
+    c.strokeStyle = '#333'; c.lineCap = 'round';
+    const hand = (ang, len, w) => { c.lineWidth = w; c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.sin(ang) * len, cy - Math.cos(ang) * len); c.stroke(); };
+    hand(((d.getHours() % 12) + d.getMinutes() / 60) * Math.PI / 6, 5, 2);
+    hand(d.getMinutes() * Math.PI / 30, 7, 1.2);
+    c.strokeStyle = '#e74c3c'; hand(d.getSeconds() * Math.PI / 30, 7.5, 0.6);
+    // табличка
+    box(c, 19 * T - 12, 7 * T - 30, 46, 9, '#e0b04a', { outline: '#6b4e1f' });
+    c.fillStyle = '#2a2440'; c.font = '700 7px Inter, sans-serif'; c.textAlign = 'center'; c.fillText('BOSS ROOM', 19 * T + 11, 7 * T - 23);
+  }
+
+  drawSunbeams(c, day) {
+    if (day.dark > 0.2) return;
+    c.fillStyle = `rgba(255,236,190,${0.07 * (1 - day.dark * 4)})`;
+    for (const [x, w] of [[1 * T + 12, 2 * T + 8], [7 * T + 4, 2 * T], [10 * T + 28, 2 * T - 8], [16 * T + 6, 2 * T - 6]]) {
+      c.beginPath(); c.moveTo(x, 64); c.lineTo(x + w, 64); c.lineTo(x + w + 40, 64 + 90); c.lineTo(x + 40, 64 + 90); c.fill();
+    }
+  }
+
+  // ---------- кадр ----------
   draw() {
     const c = this.c;
-    if (!this.bg || this.bgHour !== new Date().getHours()) this.drawBackground();
-    c.setTransform(this.px, 0, 0, this.px, 0, 0);
+    if (!this.bg) this.drawBackground();
+    const day = this.daylight();
+    const { z, x: camX, y: camY } = this.cam;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.fillStyle = '#121019';
+    c.fillRect(0, 0, this.cv.width, this.cv.height);
+    const sx = this.dpr * z, tx = this.dpr * (this.vw / 2 - camX * z), ty = this.dpr * (this.vh / 2 - camY * z);
+    c.setTransform(sx, 0, 0, sx, tx, ty);
+    c.imageSmoothingEnabled = z * this.dpr < 2;
+    c.drawImage(this.bg, 0, 0, WW, WH);
     c.imageSmoothingEnabled = false;
-    c.drawImage(this.bg, 0, 0);
-    this.drawWallStuff(c);
+    this.drawWall(c, day);
+    this.drawSunbeams(c, day);
 
+    // плоские объекты (ковры), затем сортировка по глубине
+    for (const f of furniture) if (f.flat) this.drawFurniture(c, f);
     const items = [];
-    for (const f of furniture) items.push({ y: (f.y + f.h) * T - 2, draw: () => this.drawFurniture(c, f) });
-    items.push({ y: 8 * T - 4, draw: () => this.drawGlassFront(c) });
+    for (const f of furniture) {
+      if (f.flat) continue;
+      let y = (f.y + f.h) * T - 2;
+      if (f.kind === 'chair') y = f.cy + 1;
+      if (f.kind === 'bosschair') y = f.cy - 1;
+      if (f.kind === 'sofa') { items.push({ y: f.y * T + 4, draw: () => this.drawFurniture(c, f, 'back') }); items.push({ y: f.y * T + 24, draw: () => this.drawFurniture(c, f, 'front') }); continue; }
+      items.push({ y, draw: () => this.drawFurniture(c, f) });
+    }
+    items.push({ y: 8 * T - 4, draw: () => this.drawGlass(c) });
     for (const a of this.agents.values()) items.push({ y: a.y, draw: () => this.drawAgent(c, a) });
+    items.push({ y: this.cat.y, draw: () => drawCat(c, this.cat.x, this.cat.y, { dir: this.cat.dir, walking: this.cat.walking, sleeping: this.cat.sleeping, t: this.t }) });
     items.sort((p, q) => p.y - q.y).forEach((i) => i.draw());
 
     for (const p of this.particles) {
-      const k = (this.t - p.born) / 2.2;
-      c.globalAlpha = 1 - k;
-      c.font = `12px ${FONT}`;
-      c.textAlign = 'center';
-      c.fillStyle = '#fff';
-      c.fillText(p.text, p.x + Math.sin(p.born * 9 + k * 4) * 6, p.y - k * 36);
+      const k = (this.t - p.born) / p.life;
+      c.globalAlpha = Math.max(0, 1 - k);
+      if (p.type === 'confetti') px(c, p.x, p.y, 3, 2, p.color);
+      else {
+        c.font = '600 9px Inter, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#ffffff';
+        c.fillText(p.text, p.x + Math.sin(p.born * 9 + k * 4) * 5, p.y - k * 30);
+      }
       c.globalAlpha = 1;
     }
-    if (this.sky().night) { c.fillStyle = 'rgba(10,15,40,.28)'; c.fillRect(0, 0, W * T, H * T); }
-    for (const a of this.agents.values()) this.drawLabel(c, a);
-    for (const a of this.agents.values()) this.drawBubble(c, a);
+
+    this.drawLighting(c, day, sx, tx, ty);
+
+    // UI в экранных координатах
+    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const showNames = z > 0.62;
+    for (const a of this.agents.values()) if (showNames || a.id === this.selected || a === this.hover) this.drawLabel(c, a);
+    for (const a of [...this.agents.values(), this.cat]) this.drawBubble(c, a);
   }
 
-  drawWallStuff(c) {
-    // доска задач
-    c.fillStyle = '#6d5844'; c.fillRect(4 * T + 10, 10, 3 * T - 8, 46);
-    c.fillStyle = '#f7f7f2'; c.fillRect(4 * T + 13, 13, 3 * T - 14, 40);
-    c.font = `11px ${FONT}`; c.textAlign = 'left'; c.fillStyle = '#c0392b';
-    c.fillText('ЗАДАЧИ', 4 * T + 18, 26);
-    c.fillStyle = '#2c3e50';
-    c.fillText(`в работе: ${this.running}`, 4 * T + 18, 39);
-    c.fillStyle = '#27ae60'; c.fillText(`готово: ${this.done || 0}`, 4 * T + 18, 50);
-    // часы
-    const d = new Date(), cx = 10 * T + 4, cy = 30;
-    c.fillStyle = '#fff'; c.beginPath(); c.arc(cx, cy, 11, 0, 7); c.fill();
-    c.strokeStyle = '#333'; c.lineWidth = 2; c.stroke();
-    const hand = (ang, len, w) => { c.lineWidth = w; c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.sin(ang) * len, cy - Math.cos(ang) * len); c.stroke(); };
-    hand(((d.getHours() % 12) + d.getMinutes() / 60) * Math.PI / 6, 5, 2);
-    hand(d.getMinutes() * Math.PI / 30, 8, 1);
-    // табличка у кабинета
-    c.fillStyle = '#e0b04a'; c.fillRect(17 * T + 6, 2 * T - 26, 64, 14);
-    c.fillStyle = '#2a2440'; c.font = `10px ${FONT}`; c.textAlign = 'center'; c.fillText('👑 БОСС', 17 * T + 38, 2 * T - 15);
+  drawLighting(c, day, sx, tx, ty) {
+    if (day.dark <= 0.02) return;
+    if (!this.lightCv) this.lightCv = document.createElement('canvas');
+    const L = this.lightCv;
+    if (L.width !== this.cv.width || L.height !== this.cv.height) { L.width = this.cv.width; L.height = this.cv.height; }
+    const lc = L.getContext('2d');
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.globalCompositeOperation = 'source-over';
+    lc.clearRect(0, 0, L.width, L.height);
+    lc.fillStyle = `rgba(12,14,42,${day.dark})`;
+    lc.fillRect(0, 0, L.width, L.height);
+    lc.setTransform(sx, 0, 0, sx, tx, ty);
+    lc.globalCompositeOperation = 'destination-out';
+    const light = (x, y, r, a = 1) => {
+      const g = lc.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+      lc.fillStyle = g; lc.fillRect(x - r, y - r, r * 2, r * 2);
+    };
+    for (const f of furniture) {
+      if (f.kind === 'desk') light((f.x + f.w - 0.3) * T, f.y * T + 4, 58, 0.85);
+      if (f.kind === 'arcade') light(f.x * T + 16, f.y * T, 40, 0.7);
+      if (f.kind === 'vending') light(f.x * T + 16, f.y * T, 44, 0.7);
+      if (f.kind === 'counter') light((f.x + 2.5) * T, f.y * T, 80, 0.8);
+      if (f.kind === 'server') light(f.x * T + 16, f.y * T, 34, 0.5);
+    }
+    for (const a of this.agents.values()) if (a.busy && a.sittingAt === a.seat) light(a.seat.x, a.seat.y - 30, 50, 0.8);
+    light(19 * T, 9.5 * T, 90, 0.6);
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.drawImage(L, 0, 0);
+    // тёплые блики
+    c.setTransform(sx, 0, 0, sx, tx, ty);
+    c.globalCompositeOperation = 'lighter';
+    for (const f of furniture) if (f.kind === 'desk') {
+      const g = c.createRadialGradient((f.x + f.w - 0.3) * T, f.y * T, 0, (f.x + f.w - 0.3) * T, f.y * T, 40);
+      g.addColorStop(0, 'rgba(255,190,90,.18)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g; c.fillRect(f.x * T - 20, f.y * T - 40, f.w * T + 60, 80);
+    }
+    c.globalCompositeOperation = 'source-over';
   }
 
-  drawGlassFront(c) {
-    c.fillStyle = 'rgba(170,220,255,.16)';
-    c.fillRect(15 * T, 7 * T + 10, 4 * T, 12);
-    c.fillRect(20 * T, 7 * T + 10, 3 * T, 12);
-    c.fillStyle = 'rgba(210,240,255,.6)';
-    c.fillRect(15 * T, 7 * T + 10, 4 * T, 2); c.fillRect(20 * T, 7 * T + 10, 3 * T, 2);
-    c.fillStyle = '#9aa7b8'; c.fillRect(19 * T - 3, 7 * T, 3, 24); c.fillRect(20 * T, 7 * T, 3, 24);
+  drawGlass(c) {
+    // вертикальная стена кабинета
+    px(c, 15 * T + 12, 2 * T - 6, 8, 6 * T + 6, 'rgba(170,220,255,.18)');
+    px(c, 15 * T + 12, 2 * T - 6, 2, 6 * T + 6, 'rgba(220,240,255,.55)');
+    px(c, 15 * T + 18, 2 * T - 6, 2, 6 * T + 6, 'rgba(120,150,180,.5)');
+    // нижняя стена с дверью
+    for (const [x0, x1] of [[15, 19], [20, 23]]) {
+      px(c, x0 * T + 12, 7 * T + 2, (x1 - x0) * T - 12, 22, 'rgba(170,220,255,.16)');
+      px(c, x0 * T + 12, 7 * T + 2, (x1 - x0) * T - 12, 2, 'rgba(220,240,255,.6)');
+      px(c, x0 * T + 12, 7 * T + 22, (x1 - x0) * T - 12, 3, '#7d8a9c');
+      for (let x = x0 * T + 40; x < x1 * T; x += 40) px(c, x, 7 * T + 2, 2, 22, 'rgba(120,150,180,.5)');
+    }
+    px(c, 19 * T - 3, 7 * T - 4, 4, 30, '#9aa7b8'); px(c, 20 * T - 1, 7 * T - 4, 4, 30, '#9aa7b8');
+    // ТВ на стекле
+    const X = 20 * T + 16, Y = 7 * T - 16;
+    box(c, X, Y, 54, 30, '#14182a');
+    px(c, X + 2, Y + 2, 50, 26, '#1d2440');
+    c.font = '700 6px Inter, sans-serif'; c.textAlign = 'left';
+    c.fillStyle = '#ffd23f'; c.fillText('LIVE', X + 4, Y + 9);
+    c.fillStyle = '#e74c3c'; if (Math.sin(this.t * 4) > 0) px(c, X + 21, Y + 5, 3, 3, '#e74c3c');
+    c.fillStyle = '#cfd8ff'; c.fillText(`работа ${this.running}`, X + 4, Y + 17); c.fillText(`готово ${this.done}`, X + 4, Y + 24);
+    for (let i = 0; i < 4; i++) { const h = 3 + ((Math.sin(this.t + i) + 1) / 2) * 12; px(c, X + 36 + i * 4, Y + 26 - h, 3, h, i % 2 ? '#5dade2' : '#2ecc71'); }
   }
 
-  drawFurniture(c, f) {
+  drawFurniture(c, f, part) {
     const X = f.x * T, Y = f.y * T, w = f.w * T, h = f.h * T;
-    const shadow = () => { c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(X + 3, Y + h - 4, w - 2, 6); };
+    const shadow = (dx = 0) => { c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(X + 3 + dx, Y + h - 3, w - 2, 5); };
     switch (f.kind) {
-      case 'desk': {
-        const a = this.agents.get(f.owner);
-        const boss = f.owner === 'mirik';
-        shadow();
-        c.fillStyle = boss ? '#5a3a22' : '#8a6a4a'; c.fillRect(X, Y + 2, w, 14);
-        c.fillStyle = boss ? '#462c18' : '#6e5238'; c.fillRect(X, Y + 16, w, h - 10);
-        c.fillStyle = 'rgba(255,255,255,.12)'; c.fillRect(X, Y + 2, w, 2);
-        // монитор (видим с обратной стороны)
-        const mx = X + w - 26;
-        if (a?.busy) { c.fillStyle = GLOW[f.owner]; c.beginPath(); c.ellipse(mx + 11, Y - 2, 18, 12, 0, 0, 7); c.fill(); }
-        c.fillStyle = '#2b2d36'; c.fillRect(mx, Y - 10, 22, 15);
-        c.fillStyle = '#3b3e4a'; c.fillRect(mx + 8, Y + 5, 6, 3); c.fillRect(mx + 5, Y + 7, 12, 2);
-        c.fillStyle = '#9aa0ad'; c.fillRect(mx + 9, Y - 5, 4, 4);
-        // клавиатура, кружка и бумаги
-        c.fillStyle = '#d9dce3'; c.fillRect(X + w / 2 - 22, Y + 8, 18, 5);
-        c.fillStyle = '#fff'; c.fillRect(X + 4, Y + 4, 6, 7); c.fillStyle = '#c0392b'; c.fillRect(X + 4, Y + 4, 6, 2);
-        if (boss) { c.fillStyle = '#f4f0e6'; c.fillRect(X + 12, Y + 5, 12, 8); c.fillStyle = '#d4cfc4'; c.fillRect(X + 14, Y + 7, 8, 1); }
-        if (boss) { c.fillStyle = '#ffd23f'; c.fillRect(X + 30, Y + 6, 10, 4); }
-        // кресло за столом (спинка видна, если агент ушёл)
-        if (!a?.sitting) { const cx = a ? a.seat.x : X + w / 2; c.fillStyle = '#333846'; c.fillRect(cx - 9, Y - 16, 18, 16); c.fillStyle = '#454b5c'; c.fillRect(cx - 7, Y - 14, 14, 4); }
-        break;
-      }
-      case 'plant':
-        c.fillStyle = 'rgba(0,0,0,.2)'; c.beginPath(); c.ellipse(X + 16, Y + 28, 10, 3, 0, 0, 7); c.fill();
-        c.fillStyle = '#b5651d'; c.fillRect(X + 8, Y + 16, 16, 13);
-        c.fillStyle = '#2e8b57';
-        for (const [dx, dy, r] of [[16, 6, 9], [9, 11, 7], [23, 11, 7], [16, 0, 6]]) { c.beginPath(); c.arc(X + dx, Y + dy, r, 0, 7); c.fill(); }
-        c.fillStyle = '#3cb371'; c.beginPath(); c.arc(X + 13, Y + 4, 4, 0, 7); c.fill();
-        break;
-      case 'bookshelf':
-        c.fillStyle = '#4a2f1d'; c.fillRect(X, Y - 26, w, h + 22);
-        for (let s = 0; s < 3; s++) for (let b = 0; b < 9; b++) {
-          c.fillStyle = ['#c0392b', '#2980b9', '#f1c40f', '#27ae60', '#8e44ad', '#e67e22'][(b + s * 2) % 6];
-          c.fillRect(X + 4 + b * 6.6, Y - 22 + s * 16, 5, 13);
+      case 'rug':
+        if (f.boss) {
+          box(c, X + 4, Y - 4, w - 8, h - 2, '#7b2d43', { outline: '#4d1a29' });
+          c.strokeStyle = '#e0b04a'; c.lineWidth = 2; c.strokeRect(X + 9, Y + 1, w - 18, h - 12);
+          for (let i = 0; i < 4; i++) px(c, X + 24 + i * 30, Y + h / 2 - 6, 6, 6, '#b04a63');
+        } else {
+          box(c, X + 6, Y + 4, w - 12, h - 8, '#3f6b75', { outline: '#2a4a52' });
+          c.strokeStyle = '#e8dcc6'; c.lineWidth = 2; c.strokeRect(X + 12, Y + 10, w - 24, h - 20);
+          for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) px(c, X + 26 + i * 32, Y + 26 + j * 30, 4, 4, '#5d8e98');
         }
         break;
-      case 'couch':
-        shadow();
-        c.fillStyle = '#2c5d8f'; c.fillRect(X, Y - 4, w, 12); c.fillStyle = '#3a76b0'; c.fillRect(X + 2, Y + 8, w - 4, 16);
-        c.fillStyle = '#244d78'; c.fillRect(X, Y + 2, 6, 22); c.fillRect(X + w - 6, Y + 2, 6, 22);
+      case 'catbed':
+        ellipse(c, X + 16, Y + 22, 15, 7, OUT); ellipse(c, X + 16, Y + 22, 14, 6, '#8e6bbf'); ellipse(c, X + 16, Y + 22, 10, 4, '#b39ddb');
         break;
-      case 'sofa':
+      case 'desk': {
+        const a = f.owner && this.agents.get(f.owner);
+        if (f.boss) {
+          shadow();
+          box(c, X, Y + 2, w, 14, '#6b4429', { hi: '#8a5a38' });
+          px(c, X, Y + 16, w, h - 12, '#4e301c'); px(c, X - 1, Y + 16, 1, h - 12, OUT); px(c, X + w, Y + 16, 1, h - 12, OUT); px(c, X - 1, Y + h + 4, w + 2, 1, OUT);
+          px(c, X + 10, Y + 20, w - 20, 8, '#5a3820'); px(c, X + w / 2 - 6, Y + 22, 12, 2, '#e0b04a');
+          // монитор Мирика (видим сзади) + лампа + бумаги + табличка
+          box(c, X + w - 34, Y - 12, 26, 16, '#2b2d36'); px(c, X + w - 24, Y + 4, 6, 3, '#3b3e4a');
+          box(c, X + 10, Y + 4, 14, 9, '#f4f0e6', { outline: '#b9b2a3' });
+          box(c, X + 30, Y + 7, 18, 5, '#e0b04a', { outline: '#6b4e1f' });
+          px(c, X + 6, Y - 8, 2, 12, '#333'); box(c, X + 2, Y - 12, 10, 5, '#2e7d4f');
+          px(c, X + w - 50, Y + 5, 5, 6, '#fff'); px(c, X + w - 50, Y + 5, 5, 2, '#c0392b');
+          break;
+        }
         shadow();
-        c.fillStyle = '#c0504d'; c.fillRect(X, Y - 2, w, 12); c.fillStyle = '#d9625e'; c.fillRect(X + 2, Y + 10, w - 4, 16);
-        c.fillStyle = '#a5403d'; c.fillRect(X, Y + 4, 7, 22); c.fillRect(X + w - 7, Y + 4, 7, 22);
+        // столешница + ножки
+        box(c, X, Y + 6, w, 14, '#9a7552', { hi: '#b48c66' });
+        px(c, X + 2, Y + 20, 3, 10, '#5e4630'); px(c, X + w - 5, Y + 20, 3, 10, '#5e4630');
+        px(c, X + 6, Y + 20, w - 12, 5, '#7b5c3f');
+        // монитор лицом к нам
+        const mx = X + w / 2 - 15, my = Y - 14;
+        box(c, mx, my, 30, 21, '#262833');
+        drawScreen(c, mx + 2, my + 2, 26, 17, f.owner ? SCREEN[f.owner] : null, a?.busy, this.t, f.x + f.y);
+        px(c, mx + 13, my + 21, 4, 3, '#3b3e4a'); px(c, mx + 9, my + 23, 12, 2, '#3b3e4a');
+        // клавиатура, мышь, кружка, лампа
+        box(c, X + w / 2 - 11, Y + 12, 22, 5, '#d9dce3', { outline: '#6b6f7c' });
+        box(c, X + w / 2 + 15, Y + 13, 3, 4, '#d9dce3', { outline: '#6b6f7c' });
+        box(c, X + 4, Y + 9, 6, 7, '#ffffff'); px(c, X + 4, Y + 9, 6, 2, f.owner ? `rgb(${GLOW[f.owner]})` : '#bbb');
+        if (a?.busy) for (let i = 0; i < 2; i++) px(c, X + 6 + i * 2, Y + 4 - ((this.t * 8 + i * 4) % 8), 1, 3, 'rgba(255,255,255,.45)');
+        px(c, X + w - 8, Y - 6, 2, 13, '#3a3a44'); box(c, X + w - 13, Y - 10, 10, 5, '#f39c12');
+        if (!f.owner) { box(c, mx + 5, my + 3, 20, 13, '#ffeaa7', { outline: '#c9b458' }); c.font = '700 3.6px Inter, sans-serif'; c.fillStyle = '#7a6a1a'; c.textAlign = 'center'; c.fillText('ВАКАНСИЯ', mx + 15, my + 9); c.fillText('скоро', mx + 15, my + 14); }
+        break;
+      }
+      case 'chair': {
+        const cx = f.cx, cy = f.cy;
+        ellipse(c, cx, cy + 4, 10, 3, 'rgba(0,0,0,.25)');
+        px(c, cx - 1, cy - 4, 2, 7, '#2b2b33');
+        px(c, cx - 8, cy + 2, 16, 2, '#2b2b33');
+        const occupied = this.agents.get(f.owner)?.sittingAt?.x === cx;
+        const bh = occupied ? 7 : 13;
+        box(c, cx - 11, cy - 2 - bh, 22, bh, '#333846', { hi: '#454b5c' });
+        px(c, cx - 8, cy - bh + 1, 16, 2, '#4f5669');
+        break;
+      }
+      case 'bosschair': {
+        const cx = f.cx, cy = f.cy;
+        box(c, cx - 15, cy - 40, 30, 36, '#5a2a1c', { hi: '#7a3e2a' });
+        for (let i = 0; i < 3; i++) px(c, cx - 10 + i * 9, cy - 34, 3, 3, '#e0b04a');
+        break;
+      }
+      case 'plant': {
+        const big = f.big;
+        ellipse(c, X + 16, Y + 28, 11, 3, 'rgba(0,0,0,.22)');
+        box(c, X + 8, Y + 16, 16, 13, '#c06a2b', { hi: '#d98a4a', lo: '#8e4a1c' });
+        const sway = Math.sin(this.t * 1.2 + X) * 1;
+        const leaves = big ? [[16, 2, 9], [8, 8, 8], [24, 8, 8], [16, -6, 7], [10, -1, 6], [22, -1, 6]] : [[16, 6, 8], [9, 11, 6], [23, 11, 6], [16, 0, 6]];
+        for (const [dx, dy, r] of leaves) { ellipse(c, X + dx + sway, Y + dy, r + 1, r + 1, OUT); }
+        for (const [dx, dy, r] of leaves) { ellipse(c, X + dx + sway, Y + dy, r, r, '#2e8b57'); ellipse(c, X + dx - 2 + sway, Y + dy - 2, r * 0.5, r * 0.5, '#43b97a'); }
+        break;
+      }
+      case 'server':
+        shadow();
+        box(c, X + 3, Y - 30, 26, 58, '#262833', { hi: '#3a3d4a' });
+        for (let i = 0; i < 6; i++) {
+          px(c, X + 6, Y - 26 + i * 9, 20, 6, '#1a1c24');
+          for (let j = 0; j < 3; j++) px(c, X + 8 + j * 4, Y - 24 + i * 9, 2, 2, Math.sin(this.t * (3 + i) + j * 2 + i) > 0.2 ? ['#2ecc71', '#5dade2', '#f1c40f'][j] : '#2c3e50');
+        }
         break;
       case 'printer':
         shadow();
-        c.fillStyle = '#d6d9de'; c.fillRect(X + 2, Y + 4, 28, 22); c.fillStyle = '#9aa0a6'; c.fillRect(X + 2, Y + 4, 28, 6);
-        c.fillStyle = '#fff'; c.fillRect(X + 8, Y + 14 + Math.sin(this.t * 2) * 1, 16, 6);
-        c.fillStyle = '#2ecc71'; c.fillRect(X + 24, Y + 20, 3, 3);
+        box(c, X + 3, Y + 6, 26, 20, '#d6d9de', { hi: '#eef0f2', lo: '#b5b9bf' });
+        px(c, X + 3, Y + 6, 26, 6, '#9aa0a6');
+        box(c, X + 8, Y + 14 + Math.sin(this.t * 2), 16, 6, '#ffffff', { outline: '#b5b9bf' });
+        px(c, X + 24, Y + 20, 3, 3, Math.sin(this.t * 3) > 0 ? '#2ecc71' : '#1e8449');
         break;
       case 'cooler':
         shadow();
-        c.fillStyle = '#ecf0f1'; c.fillRect(X + 8, Y + 8, 16, 20);
-        c.fillStyle = 'rgba(110,190,255,.85)'; c.fillRect(X + 9, Y - 10, 14, 18);
-        c.fillStyle = 'rgba(255,255,255,.5)'; c.fillRect(X + 11, Y - 8, 3, 12);
+        box(c, X + 8, Y + 6, 16, 22, '#ecf0f1', { lo: '#bdc3c7' });
+        box(c, X + 9, Y - 12, 14, 18, 'rgba(110,190,255,.85)', { outline: '#4a7fa8' });
+        px(c, X + 11, Y - 10, 3, 12, 'rgba(255,255,255,.5)');
+        px(c, X + 12, Y + 12, 3, 3, '#e74c3c'); px(c, X + 17, Y + 12, 3, 3, '#3498db');
         break;
-      case 'meeting':
-        c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(X + 4, Y + h - 6, w - 4, 8);
-        for (let i = 0; i < 4; i++) { c.fillStyle = '#3b3f4c'; c.fillRect(X + i * T + 8, Y - 10, 16, 10); c.fillRect(X + i * T + 8, Y + h - 2, 16, 8); }
-        c.fillStyle = '#e8e2d6'; c.fillRect(X, Y + 2, w, h - 8); c.fillStyle = '#cfc7b8'; c.fillRect(X, Y + h - 8, w, 6);
-        c.fillStyle = '#fff'; c.fillRect(X + 20, Y + 14, 14, 10); c.fillRect(X + 70, Y + 22, 14, 10);
-        c.fillStyle = '#34495e'; c.fillRect(X + 48, Y + 18, 20, 12); c.fillStyle = '#5dade2'; c.fillRect(X + 50, Y + 20, 16, 8);
+      case 'coffeetable':
+        shadow();
+        box(c, X + 4, Y + 8, w - 8, 14, '#7a5636', { hi: '#9a7250' });
+        box(c, X + 16, Y + 10, 8, 6, '#ffffff'); box(c, X + 40, Y + 11, 16, 5, '#5dade2'); box(c, X + 66, Y + 9, 10, 8, '#e74c3c');
         break;
+      case 'sofa':
+        if (part === 'back') {
+          box(c, X, Y - 10, w, 18, '#c0504d', { hi: '#d9625e' });
+          for (let i = 1; i < f.w; i++) px(c, X + i * T, Y - 8, 1, 14, '#9e3f3c');
+        } else {
+          box(c, X, Y + 6, w, 16, '#d9625e', { lo: '#a5403d' });
+          box(c, X - 4, Y - 4, 8, 26, '#a5403d'); box(c, X + w - 4, Y - 4, 8, 26, '#a5403d');
+          box(c, X + 10, Y - 4, 12, 8, '#ffd23f');
+        }
+        break;
+      case 'bookcase':
+        shadow();
+        box(c, X + 2, Y - 26, 28, 54, '#6b4429');
+        for (let s = 0; s < 3; s++) {
+          px(c, X + 4, Y - 22 + s * 16, 24, 13, '#3a2416');
+          for (let b = 0; b < 5; b++) px(c, X + 5 + b * 4.6, Y - 20 + s * 16 + (b % 2), 4, 11 - (b % 2), ['#c0392b', '#2980b9', '#f1c40f', '#27ae60', '#8e44ad'][(b + s) % 5]);
+        }
+        break;
+      case 'bookshelf':
+        box(c, X, Y - 30, w, h + 26, '#4a2f1d', { hi: '#5e3c26' });
+        for (let s = 0; s < 3; s++) {
+          px(c, X + 3, Y - 26 + s * 18, w - 6, 15, '#2c1b10');
+          for (let b = 0; b < 11; b++) px(c, X + 4 + b * 5.4, Y - 24 + s * 18 + (b % 3), 4.4, 13 - (b % 3), ['#c0392b', '#2980b9', '#f1c40f', '#27ae60', '#8e44ad', '#e67e22'][(b + s * 2) % 6]);
+        }
+        ellipse(c, X + w - 12, Y - 34, 6, 6, '#3498db'); px(c, X + w - 13, Y - 28, 2, 4, '#7f6a4f');
+        break;
+      case 'couch':
+        shadow();
+        box(c, X, Y - 8, w, 14, '#2c5d8f', { hi: '#3a76b0' });
+        box(c, X + 2, Y + 6, w - 4, 14, '#3a76b0', { lo: '#2c5d8f' });
+        box(c, X - 3, Y - 2, 7, 22, '#244d78'); box(c, X + w - 4, Y - 2, 7, 22, '#244d78');
+        break;
+      case 'meeting': {
+        ellipse(c, X + w / 2, Y + h, w / 2 + 6, 8, 'rgba(0,0,0,.2)');
+        for (let i = 0; i < 4; i++) box(c, X + i * T + 8, Y - 8, 16, 10, '#3b3f4c', { hi: '#4d5262' });
+        box(c, X, Y + 2, w, h - 10, '#e8e2d6', { hi: '#f6f2ea' });
+        px(c, X, Y + h - 8, w, 6, '#bfb6a6');
+        for (let i = 0; i < 4; i++) box(c, X + i * T + 8, Y + h - 4, 16, 9, '#3b3f4c', { hi: '#4d5262' });
+        box(c, X + 18, Y + 12, 14, 10, '#ffffff', { outline: '#bbb' }); box(c, X + 84, Y + 22, 14, 10, '#ffffff', { outline: '#bbb' });
+        box(c, X + 50, Y + 18, 22, 14, '#34495e'); drawScreen(c, X + 52, Y + 20, 18, 9, 'dash', true, this.t, 3);
+        box(c, X + 106, Y + 14, 6, 7, '#ffffff');
+        break;
+      }
       case 'counter':
-        c.fillStyle = '#6b4f3a'; c.fillRect(X, Y + 4, w, h - 2); c.fillStyle = '#d0d3d4'; c.fillRect(X, Y, w, 8);
-        c.fillStyle = '#2c2c2c'; c.fillRect(X + 2 * T + 6, Y - 18, 20, 22);
-        c.fillStyle = '#e74c3c'; c.fillRect(X + 2 * T + 10, Y - 14, 4, 3);
-        c.fillStyle = '#fff'; c.fillRect(X + 2 * T + 12, Y - 2, 6, 6);
-        if (Math.sin(this.t) > 0) { c.fillStyle = 'rgba(255,255,255,.5)'; c.fillRect(X + 2 * T + 14, Y - 26 - (this.t * 10) % 8, 2, 6); }
-        c.fillStyle = '#c0392b'; c.fillRect(X + 3 * T + 8, Y - 6, 16, 10);
-        c.fillStyle = '#ff6f61'; c.fillRect(X + 10, Y - 4, 8, 8); c.fillStyle = '#f9e79f'; c.fillRect(X + 22, Y - 4, 8, 8);
+        box(c, X, Y + 4, w, h - 2, '#6b4f3a', { lo: '#523b2b' });
+        for (let i = 0; i < f.w; i++) px(c, X + i * T + 15, Y + 12, 2, 12, '#523b2b');
+        px(c, X - 1, Y - 1, w + 2, 10, OUT); px(c, X, Y, w, 8, '#d0d3d4'); px(c, X, Y, w, 2, '#eef0f1');
+        // кофемашина
+        box(c, X + 2 * T + 4, Y - 20, 22, 24, '#2c2c2c', { hi: '#444' });
+        px(c, X + 2 * T + 8, Y - 15, 4, 3, '#e74c3c'); px(c, X + 2 * T + 14, Y - 15, 4, 3, '#2ecc71');
+        box(c, X + 2 * T + 11, Y - 3, 7, 6, '#ffffff');
+        for (let i = 0; i < 2; i++) px(c, X + 2 * T + 13 + i * 2, Y - 26 - ((this.t * 10 + i * 5) % 9), 1, 4, 'rgba(255,255,255,.45)');
+        // микроволновка, раковина, фрукты
+        box(c, X + 3 * T + 6, Y - 12, 24, 14, '#bdc3c7'); px(c, X + 3 * T + 9, Y - 9, 14, 8, '#2c3e50'); px(c, X + 3 * T + 25, Y - 9, 2, 8, '#7f8c8d');
+        px(c, X + 6, Y + 1, 22, 5, '#95a5a6'); px(c, X + 15, Y - 6, 2, 7, '#bdc3c7');
+        ellipse(c, X + T + 12, Y + 2, 5, 3, '#e74c3c'); ellipse(c, X + T + 20, Y + 2, 4, 3, '#f1c40f'); ellipse(c, X + T + 16, Y - 1, 4, 3, '#2ecc71');
         break;
       case 'fridge':
         shadow();
-        c.fillStyle = '#dfe6e9'; c.fillRect(X + 2, Y - 20, 28, h + 18);
-        c.fillStyle = '#b2bec3'; c.fillRect(X + 2, Y + 10, 28, 2); c.fillRect(X + 24, Y - 12, 2, 16);
-        c.fillStyle = '#fdcb6e'; c.fillRect(X + 8, Y - 14, 6, 6);
+        box(c, X + 3, Y - 30, 26, 58, '#dfe6e9', { hi: '#f5f7f8', lo: '#b2bec3' });
+        px(c, X + 3, Y - 4, 26, 2, '#b2bec3'); px(c, X + 24, Y - 24, 2, 14, '#95a5a6'); px(c, X + 24, Y + 2, 2, 12, '#95a5a6');
+        box(c, X + 8, Y - 24, 6, 6, '#fdcb6e'); box(c, X + 15, Y - 20, 5, 5, '#81ecec');
+        break;
+      case 'vending': {
+        shadow();
+        box(c, X + 3, Y - 30, 26, 58, '#c0392b', { hi: '#e74c3c' });
+        px(c, X + 6, Y - 26, 16, 34, '#1e2a38');
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) px(c, X + 7 + j * 5, Y - 24 + i * 8, 4, 5, ['#f1c40f', '#2ecc71', '#3498db', '#e67e22'][(i + j) % 4]);
+        px(c, X + 23, Y - 20, 4, 10, '#95a5a6'); px(c, X + 6, Y + 14, 16, 6, '#111');
+        break;
+      }
+      case 'bistro':
+        ellipse(c, X + 16, Y + 28, 13, 4, 'rgba(0,0,0,.2)');
+        px(c, X + 14, Y + 12, 4, 16, '#555');
+        ellipse(c, X + 16, Y + 11, 15, 8, OUT); ellipse(c, X + 16, Y + 10, 14, 7, '#f5f5f5');
+        box(c, X + 8, Y + 5, 5, 5, '#8e5a3c'); ellipse(c, X + 22, Y + 9, 4, 2, '#f39c12');
         break;
       case 'pingpong': {
         shadow();
-        c.fillStyle = '#555'; c.fillRect(X + 8, Y + 20, 4, 10); c.fillRect(X + w - 12, Y + 20, 4, 10);
-        c.fillStyle = '#1e7a4c'; c.fillRect(X, Y + 2, w, 20); c.fillStyle = '#fff'; c.fillRect(X, Y + 2, w, 1); c.fillRect(X, Y + 11, w, 1);
-        c.fillStyle = '#ddd'; c.fillRect(X + w / 2 - 1, Y - 4, 2, 26);
+        px(c, X + 8, Y + 20, 4, 10, '#444'); px(c, X + w - 12, Y + 20, 4, 10, '#444');
+        box(c, X, Y + 2, w, 20, '#1e7a4c', { lo: '#155c39' });
+        px(c, X, Y + 11, w, 1, '#ffffff'); px(c, X + 1, Y + 2, 1, 20, '#fff'); px(c, X + w - 2, Y + 2, 1, 20, '#fff');
+        px(c, X + w / 2 - 1, Y - 4, 2, 26, '#dddddd');
         const bx = X + w / 2 + Math.sin(this.t * 3) * (w / 2 - 8);
-        c.fillStyle = '#ff9f43'; c.beginPath(); c.arc(bx, Y + 6 - Math.abs(Math.sin(this.t * 6)) * 10, 2.5, 0, 7); c.fill();
+        ellipse(c, bx, Y + 6 - Math.abs(Math.sin(this.t * 6)) * 10, 2.5, 2.5, '#ff9f43');
+        box(c, X + 6, Y + 6, 5, 6, '#c0392b'); box(c, X + w - 11, Y + 12, 5, 6, '#2c3e50');
         break;
       }
       case 'arcade':
         shadow();
-        c.fillStyle = '#6c3fc4'; c.fillRect(X + 4, Y - 18, 24, 46);
-        c.fillStyle = '#111'; c.fillRect(X + 7, Y - 14, 18, 14);
-        c.fillStyle = `hsl(${(this.t * 80) % 360},80%,60%)`; c.fillRect(X + 10, Y - 11, 4, 4); c.fillRect(X + 17, Y - 6 + Math.sin(this.t * 4) * 2, 4, 3);
-        c.fillStyle = '#e74c3c'; c.fillRect(X + 10, Y + 4, 4, 4); c.fillStyle = '#f1c40f'; c.fillRect(X + 18, Y + 4, 4, 4);
-        break;
-      case 'bistro':
-        c.fillStyle = 'rgba(0,0,0,.2)'; c.beginPath(); c.ellipse(X + 16, Y + 28, 12, 4, 0, 0, 7); c.fill();
-        c.fillStyle = '#555'; c.fillRect(X + 14, Y + 14, 4, 14);
-        c.fillStyle = '#f5f5f5'; c.beginPath(); c.ellipse(X + 16, Y + 12, 14, 7, 0, 0, 7); c.fill();
-        c.fillStyle = '#8e5a3c'; c.fillRect(X + 10, Y + 7, 5, 5);
+        box(c, X + 4, Y - 22, 24, 50, '#6c3fc4', { hi: '#8a5ce0' });
+        px(c, X + 4, Y - 22, 24, 6, '#4a2a8a');
+        px(c, X + 7, Y - 14, 18, 14, '#111');
+        px(c, X + 10, Y - 11, 4, 4, `hsl(${(this.t * 80) % 360},80%,60%)`); px(c, X + 17, Y - 6 + Math.sin(this.t * 4) * 2, 4, 3, '#ffd23f');
+        px(c, X + 6, Y + 2, 20, 6, '#3a2270'); px(c, X + 10, Y + 3, 3, 3, '#e74c3c'); px(c, X + 18, Y + 3, 3, 3, '#f1c40f');
         break;
     }
   }
 
   drawAgent(c, a) {
     if (this.selected === a.id || this.hover === a) {
-      c.strokeStyle = this.selected === a.id ? '#ffd23f' : 'rgba(255,255,255,.6)';
+      c.strokeStyle = this.selected === a.id ? '#ffd23f' : 'rgba(255,255,255,.7)';
       c.lineWidth = 2;
-      c.beginPath(); c.ellipse(a.x, a.y, 16, 6, 0, 0, 7); c.stroke();
+      c.beginPath(); c.ellipse(a.x, a.y + 1, 17, 6, 0, 0, Math.PI * 2); c.stroke();
     }
     if (this.t > a.blinkAt + 0.15) a.blinkAt = this.t + 2 + Math.random() * 4;
+    const atDesk = a.sittingAt === a.seat;
     drawChar(c, a.x, a.y, a.look, {
       t: this.t + a.x * 0.01,
       walking: a.walking,
       sitting: a.sitting,
-      dir: a.sitting ? 'down' : a.dir,
+      dir: a.dir,
       blink: this.t > a.blinkAt,
-      typing: a.sitting && a.status === 'working',
+      typing: atDesk && a.status === 'working',
       talking: a.bubble && this.t < a.bubble.until && Math.sin(this.t * 14) > 0,
-      glow: a.sitting && a.busy ? GLOW[a.id] : null,
     });
+    if (atDesk && a.busy && a.boss) {
+      const g = c.createRadialGradient(a.x, a.y - 30, 0, a.x, a.y - 30, 30);
+      g.addColorStop(0, `rgba(${GLOW[a.id]},.25)`); g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g; c.fillRect(a.x - 30, a.y - 60, 60, 60);
+    }
+  }
+
+  headPos(a) {
+    const top = a.isCat ? 22 : a.sitting ? 38 : 52;
+    return this.toScreen(a.x, a.y - top);
   }
 
   drawLabel(c, a) {
-    c.font = `11px ${FONT}`;
-    const text = a.name;
-    const w = c.measureText(text).width + 12;
-    const y = a.sitting ? a.seat.y + 14 : a.y + 6;
-    c.fillStyle = 'rgba(20,18,30,.75)';
-    c.beginPath(); c.roundRect(a.x - w / 2, y, w, 14, 7); c.fill();
-    const dot = { idle: '#7f8c8d', thinking: '#f1c40f', working: '#2ecc71', managing: '#e67e22' }[a.status] || '#7f8c8d';
-    c.fillStyle = dot; c.beginPath(); c.arc(a.x - w / 2 + 7, y + 7, 3, 0, 7); c.fill();
-    c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText(text, a.x + 3, y + 11);
+    const p = this.toScreen(a.x, a.y);
+    const y = p.y + 6;
+    c.font = UI_FONT;
+    const w = c.measureText(a.name).width + 22;
+    c.fillStyle = 'rgba(18,16,28,.82)';
+    c.beginPath(); c.roundRect(p.x - w / 2, y, w, 18, 9); c.fill();
+    const dot = { idle: '#8e8aa3', thinking: '#f1c40f', working: '#2ecc71', managing: '#ff9f43' }[a.status] || '#8e8aa3';
+    ellipse(c, p.x - w / 2 + 9, y + 9, 3.5, 3.5, dot);
+    c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(a.name, p.x + 5, y + 9.5);
+    c.textBaseline = 'alphabetic';
   }
 
   drawBubble(c, a) {
+    const p = this.headPos(a);
+    if (p.x < -40 || p.x > this.vw + 40 || p.y < -10 || p.y > this.vh + 60) return;
+    if (a.emote && this.t < a.emote.until) {
+      const k = Math.min(1, (a.emote.until - this.t) * 2);
+      c.globalAlpha = k;
+      c.font = '700 18px Inter, sans-serif'; c.textAlign = 'center';
+      c.fillText(a.emote.icon, p.x, p.y - 6 - Math.sin(this.t * 10) * 2);
+      c.globalAlpha = 1;
+      return;
+    }
     let text = null;
     if (a.bubble && this.t < a.bubble.until) text = a.bubble.text;
-    else if (a.busy && a.sitting) text = a.status === 'thinking' ? '💭 думает' + '.'.repeat(1 + (Math.floor(this.t * 3) % 3)) : a.activity;
+    else if (a.busy && a.sittingAt === a.seat) text = a.status === 'thinking' ? '💭 думает' + '.'.repeat(1 + (Math.floor(this.t * 3) % 3)) : a.activity;
+    else if (a.sleeping) text = 'z' + 'z'.repeat(Math.floor(this.t * 2) % 3) + '…';
     if (!text) return;
-    if (text.length > 42) text = text.slice(0, 40) + '…';
-    c.font = `11px ${FONT}`;
-    const w = Math.min(230, c.measureText(text).width + 14);
-    const top = (a.sitting ? a.seat.y - 40 : a.y - 44) - 22;
-    const x = Math.max(4, Math.min(W * T - w - 4, a.x - w / 2));
-    c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.roundRect(x + 2, top + 2, w, 18, 6); c.fill();
-    c.fillStyle = '#fffdf5'; c.beginPath(); c.roundRect(x, top, w, 18, 6); c.fill();
-    c.beginPath(); c.moveTo(a.x - 4, top + 18); c.lineTo(a.x + 4, top + 18); c.lineTo(a.x, top + 24); c.fill();
-    c.fillStyle = '#222'; c.textAlign = 'left'; c.fillText(text, x + 7, top + 13, w - 12);
+    c.font = UI_FONT;
+    const maxW = Math.min(220, this.vw * 0.6);
+    let tw = c.measureText(text).width;
+    while (tw > maxW - 18 && text.length > 4) { text = text.slice(0, -2); tw = c.measureText(text + '…').width; if (tw <= maxW - 18) text += '…'; }
+    const w = tw + 18, h = 24;
+    const x = Math.max(4, Math.min(this.vw - w - 4, p.x - w / 2));
+    const y = p.y - h - 10;
+    c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.roundRect(x + 1, y + 2, w, h, 10); c.fill();
+    c.fillStyle = a.busy ? '#fffdf3' : '#ffffff';
+    c.beginPath(); c.roundRect(x, y, w, h, 10); c.fill();
+    c.beginPath(); c.moveTo(p.x - 5, y + h - 1); c.lineTo(p.x + 5, y + h - 1); c.lineTo(p.x, y + h + 6); c.fill();
+    if (a.busy && !a.isCat) { c.fillStyle = `rgb(${GLOW[a.id] || '255,210,80'})`; c.fillRect(x + 6, y + 6, 3, h - 12); }
+    c.fillStyle = '#211d2e'; c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillText(text, x + (a.busy ? 13 : 9), y + h / 2 + 0.5);
+    c.textBaseline = 'alphabetic';
   }
 }

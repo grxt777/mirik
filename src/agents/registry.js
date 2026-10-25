@@ -6,7 +6,7 @@ export const AGENTS = {
     role: 'Старший агент, руководитель',
     emoji: '👑',
     desk: { x: 18, y: 4 },
-    look: { shirt: '#2c2f3a', hair: '#2b1d14', skin: '#f1c7a1', tie: '#f2b134', crown: true },
+    look: { jacket: '#22304f', shirt: '#ffffff', tie: '#f2b134', hair: '#2b1d14', hairStyle: 'short', skin: '#f1c7a1', pants: '#1c2740', crown: true, stubble: true },
     tools: ['delegate', 'remember', 'recall', 'web_search', 'fetch_url', 'notify_user', 'list_files', 'read_file', 'send_file'],
     prompt: `Ты — Мирик, старший ИИ-агент и руководитель офиса ИИ-сотрудников. Ты общаешься с владельцем в Telegram.
 Твоя команда (делегируй через инструмент delegate):
@@ -28,8 +28,8 @@ export const AGENTS = {
     name: 'Тимур',
     role: 'Программист',
     emoji: '💻',
-    desk: { x: 3, y: 5 },
-    look: { shirt: '#3d7be0', hair: '#111', skin: '#e0ac69', glasses: true },
+    desk: { x: 2, y: 4 },
+    look: { shirt: '#3d7be0', hood: true, hair: '#17171d', hairStyle: 'spiky', skin: '#e0ac69', glasses: true, headphones: '#ff5d5d', pants: '#2f3447' },
     tools: ['run_code', 'write_file', 'read_file', 'list_files', 'send_file', 'web_search', 'fetch_url'],
     prompt: `Ты — Тимур, сильный программист в ИИ-офисе. Пишешь рабочий код, сам его запускаешь и проверяешь через run_code.
 Файлы сохраняй в рабочую папку (projects/<имя>/...). Если нужно отдать результат пользователю — send_file.
@@ -40,8 +40,8 @@ export const AGENTS = {
     name: 'Лиза',
     role: 'Исследователь',
     emoji: '🔎',
-    desk: { x: 8, y: 5 },
-    look: { shirt: '#9b59b6', hair: '#c96a2b', skin: '#f6d0b1', longHair: true },
+    desk: { x: 6, y: 4 },
+    look: { shirt: '#9b59b6', hair: '#c96a2b', hairStyle: 'long', skin: '#f6d0b1', blush: true, pants: '#3b3355' },
     tools: ['web_search', 'fetch_url', 'write_file', 'read_file', 'send_file'],
     prompt: `Ты — Лиза, исследователь в ИИ-офисе. Ищешь информацию в интернете (web_search), читаешь источники (fetch_url),
 проверяешь факты в нескольких источниках. Отчёт: чёткая выжимка + ссылки на источники.`,
@@ -51,8 +51,8 @@ export const AGENTS = {
     name: 'Боря',
     role: 'Оператор браузера',
     emoji: '🌐',
-    desk: { x: 3, y: 10 },
-    look: { shirt: '#27ae60', hair: '#5a3825', skin: '#f1c7a1', cap: '#e74c3c' },
+    desk: { x: 2, y: 8 },
+    look: { shirt: '#27ae60', hair: '#5a3825', hairStyle: 'short', skin: '#f1c7a1', cap: '#e74c3c', capBack: true, pants: '#34495e' },
     tools: ['browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_fill_secret', 'list_secrets', 'browser_screenshot', 'browser_save_page', 'list_files', 'read_file', 'send_file'],
     prompt: `Ты — Боря, оператор браузера в ИИ-офисе. Работаешь в настоящем браузере: открываешь сайты, логинишься, кликаешь, скачиваешь файлы.
 После каждого действия получаешь снимок страницы с элементами [id] — кликай и вводи по id.
@@ -65,8 +65,8 @@ export const AGENTS = {
     name: 'Ника',
     role: 'Отличница-аналитик',
     emoji: '📚',
-    desk: { x: 8, y: 10 },
-    look: { shirt: '#e84393', hair: '#1b1b1b', skin: '#f3d3b8', longHair: true, glasses: true },
+    desk: { x: 6, y: 8 },
+    look: { jacket: '#e84393', shirt: '#ffffff', hair: '#1b1b1b', hairStyle: 'bun', skin: '#f3d3b8', glasses: true, blush: true, pants: '#2d2a3a' },
     tools: ['read_file', 'write_file', 'list_files', 'run_code', 'send_file', 'web_search', 'fetch_url'],
     prompt: `Ты — Ника, отличница и аналитик в ИИ-офисе. Решаешь домашние задания по любым предметам, задачи, пишешь эссе, рефераты, переводы.
 Решай подробно и правильно, показывай ход решения. Для вычислений используй run_code (python).
