@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<!-- Шаблон роликов Департамента ютуберов: раскадровка (window.__SPEC__) → кадр на любой момент t.
+     Всё считается от t (никаких таймеров и CSS-анимаций), поэтому рендер покадрово детерминирован. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;800;900&family=Inter:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --u: min(1vw, 1vh); --accent: #ffd23f; --fg: #fff; --sub: rgba(255,255,255,.75); --card: rgba(255,255,255,.08); }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; font-family: Montserrat, Inter, "DejaVu Sans", sans-serif; color: var(--fg); }
+  #bg { position: absolute; inset: 0; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(calc(var(--u) * 9)); opacity: .55; }
+  .scene { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
+           padding: 9% 8%; box-sizing: border-box; text-align: center; will-change: transform, opacity; }
+  .shorts .scene { padding: 16% 7% 26%; }
+  .shorts .t-hook { font-size: calc(var(--u) * 12.5); }
+  .shorts .t-title { font-size: calc(var(--u) * 10); }
+  .shorts .t-text { font-size: calc(var(--u) * 9); }
+  .shorts .t-sub { font-size: calc(var(--u) * 5); }
+  .shorts .item { font-size: calc(var(--u) * 6); }
+  .t-hook { font-weight: 900; font-size: calc(var(--u) * 11); line-height: 1.05; letter-spacing: -.02em; text-wrap: balance; }
+  .t-title { font-weight: 900; font-size: calc(var(--u) * 8.5); line-height: 1.08; letter-spacing: -.015em; text-wrap: balance; }
+  .t-sub { font-family: Inter, sans-serif; font-weight: 700; font-size: calc(var(--u) * 4.2); color: var(--sub); margin-top: calc(var(--u) * 3); text-wrap: balance; }
+  .t-text { font-weight: 800; font-size: calc(var(--u) * 7); line-height: 1.18; text-wrap: balance; }
+  .t-text .w { display: inline-block; margin: 0 .14em; }
+  .emoji { font-size: calc(var(--u) * 16); line-height: 1; margin-bottom: calc(var(--u) * 4); }
+  .list { width: 100%; max-width: calc(var(--u) * 92); text-align: left; margin-top: calc(var(--u) * 5); }
+  .item { display: flex; align-items: center; gap: calc(var(--u) * 3); background: var(--card); border-radius: calc(var(--u) * 3);
+          padding: calc(var(--u) * 3) calc(var(--u) * 4); margin-bottom: calc(var(--u) * 2.6); font-weight: 800; font-size: calc(var(--u) * 5); }
+  .num { flex: none; width: calc(var(--u) * 9); height: calc(var(--u) * 9); border-radius: 50%; background: var(--accent); color: #111;
+         display: grid; place-items: center; font-weight: 900; font-size: calc(var(--u) * 5); }
+  .value { font-weight: 900; font-size: calc(var(--u) * 26); line-height: 1; color: var(--accent); letter-spacing: -.03em; }
+  .qmark { font-family: Georgia, serif; font-size: calc(var(--u) * 30); line-height: .6; color: var(--accent); height: calc(var(--u) * 14); }
+  .author { font-family: Inter, sans-serif; font-weight: 700; font-size: calc(var(--u) * 4); color: var(--accent); margin-top: calc(var(--u) * 4); }
+  .compare { display: flex; gap: calc(var(--u) * 4); width: 100%; align-items: stretch; margin-top: calc(var(--u) * 4); }
+  .shorts .compare { flex-direction: column; }
+  .side { flex: 1; background: var(--card); border-radius: calc(var(--u) * 4); padding: calc(var(--u) * 5); }
+  .side h3 { margin: 0 0 calc(var(--u) * 2); font-weight: 900; font-size: calc(var(--u) * 6.5); color: var(--accent); }
+  .side p { margin: 0; font-family: Inter, sans-serif; font-weight: 700; font-size: calc(var(--u) * 4.4); color: var(--fg); line-height: 1.3; }
+  .vs { position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 13); height: calc(var(--u) * 13); margin: calc(var(--u) * -6.5);
+        border-radius: 50%; background: var(--accent); color: #111; display: grid; place-items: center; font-weight: 900; font-size: calc(var(--u) * 5); }
+  .imgwrap { position: absolute; inset: 0; overflow: hidden; }
+  .imgwrap img { width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
+  .imgshade { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.75) 0%, rgba(0,0,0,0) 55%); }
+  .imgtitle { position: absolute; left: 7%; right: 7%; bottom: 12%; text-align: left; font-weight: 900; font-size: calc(var(--u) * 7.5); line-height: 1.1; }
+  .shorts .imgtitle { bottom: 28%; }
+  .btn { margin-top: calc(var(--u) * 6); background: #ff0033; color: #fff; font-weight: 900; font-size: calc(var(--u) * 6); border-radius: calc(var(--u) * 3);
+         padding: calc(var(--u) * 3.2) calc(var(--u) * 8); display: inline-flex; align-items: center; gap: calc(var(--u) * 2.5); }
+  #caption { position: absolute; left: 6%; right: 6%; bottom: 9%; display: flex; justify-content: center; pointer-events: none; }
+  .shorts #caption { bottom: 17%; }
+  #caption span.box { background: rgba(0,0,0,.62); border-radius: calc(var(--u) * 2.4); padding: calc(var(--u) * 1.8) calc(var(--u) * 3.2);
+         font-weight: 800; font-size: calc(var(--u) * 5); line-height: 1.25; text-align: center; max-width: 100%; }
+  #caption .cw { opacity: .55; } #caption .cw.on { opacity: 1; color: var(--cap-accent, #ffd23f); }
+  #progress { position: absolute; left: 0; top: 0; height: calc(var(--u) * .9); background: var(--accent); }
+  #watermark { position: absolute; right: 4%; bottom: 3.5%; font-family: Inter, sans-serif; font-weight: 700; font-size: calc(var(--u) * 3.2); opacity: .7; }
+  .shorts #watermark { bottom: 11%; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="bg"></div><div id="scenes"></div><div id="caption"></div><div id="progress"></div><div id="watermark"></div></div>
+<script>
+/*__SPEC__*/
+(() => {
+  const SPEC = window.__SPEC__ || { scenes: [{ type: 'title', duration: 3, title: 'Нет раскадровки' }] };
+  const THEMES = {
+    dark:  { bg: ['#0e0e14', '#1b1530'], blobs: ['#6c5ce7', '#00b894', '#e84393'], fg: '#ffffff', sub: 'rgba(255,255,255,.72)', card: 'rgba(255,255,255,.08)' },
+    light: { bg: ['#f7f5f0', '#e9e4f5'], blobs: ['#ffd23f', '#74b9ff', '#fd79a8'], fg: '#15151a', sub: 'rgba(20,20,26,.68)', card: 'rgba(0,0,0,.06)' },
+    neon:  { bg: ['#0a0420', '#16003b'], blobs: ['#ff00c8', '#00e5ff', '#7c4dff'], fg: '#ffffff', sub: 'rgba(255,255,255,.75)', card: 'rgba(255,255,255,.07)' },
+    warm:  { bg: ['#2a1206', '#4a1f0c'], blobs: ['#ff7a2f', '#ffd23f', '#e84393'], fg: '#fff8ef', sub: 'rgba(255,248,239,.75)', card: 'rgba(255,255,255,.09)' },
+  };
+  const theme = THEMES[SPEC.theme] || THEMES.dark;
+  // ---------- контраст: текст и акцент всегда читаются, даже если в раскадровке выбраны неудачные цвета ----------
+  const rgb = (h) => { const m = String(h || '').trim().match(/^#?([\da-f]{3}|[\da-f]{6})$/i); if (!m) return null; let x = m[1]; if (x.length === 3) x = [...x].map((c) => c + c).join(''); return [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16)); };
+  const lum = (c) => { if (!c) return null; const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const pickAccent = (want, bgL) => { const L = lum(rgb(want)); if (L != null && ratio(L, bgL) >= 3) return want; return bgL > 0.45 ? '#b3261e' : '#ffd23f'; };
+  const themeL = lum(rgb(theme.bg[0]));
+  const accent = pickAccent(SPEC.accent || '#ffd23f', themeL);
+  const root = document.documentElement.style;
+  root.setProperty('--accent', accent); root.setProperty('--fg', theme.fg); root.setProperty('--sub', theme.sub); root.setProperty('--card', theme.card);
+  // субтитры на тёмной плашке — подсветка должна быть светлой
+  root.setProperty('--cap-accent', (lum(rgb(SPEC.accent)) ?? 0) > 0.3 ? SPEC.accent : '#ffd23f');
+  const stage = document.getElementById('stage');
+  if (innerHeight > innerWidth) stage.classList.add('shorts');
+
+  // ---------- утилиты ----------
+  const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+  const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
+  const back = (x) => { x = clamp(x); const c = 1.70158; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = String(text); return e; };
+  const words = (s) => String(s || '').split(/\s+/).filter(Boolean);
+  const T_IN = 0.35, T_OUT = 0.22;
+
+  // ---------- фон: градиент + плавающие пятна ----------
+  const bg = document.getElementById('bg');
+  bg.style.background = `linear-gradient(160deg, ${theme.bg[0]}, ${theme.bg[1]})`;
+  const blobs = theme.blobs.map((c, i) => { const b = el('div', 'blob'); b.style.background = c; b.style.width = b.style.height = `${38 + i * 10}vmax`; bg.append(b); return b; });
+
+  // ---------- сцены ----------
+  const scenes = (SPEC.scenes || []).map((s) => ({ ...s, duration: Math.max(0.5, Math.min(30, Number(s.duration) || 3)) }));
+  let acc = 0;
+  for (const s of scenes) { s.start = acc; acc += s.duration; }
+  const TOTAL = acc;
+  const host = document.getElementById('scenes');
+  const imgs = [];
+
+  function build(s) {
+    const n = el('div', 'scene');
+    if (s.bg) {
+      n.style.background = s.bg;
+      const L = lum(rgb(s.bg));
+      if (L != null) {
+        const light = L > 0.45;
+        n.style.setProperty('--fg', light ? '#1b1510' : '#ffffff');
+        n.style.setProperty('--sub', light ? 'rgba(27,21,16,.72)' : 'rgba(255,255,255,.75)');
+        n.style.setProperty('--card', light ? 'rgba(0,0,0,.07)' : 'rgba(255,255,255,.08)');
+        n.style.setProperty('--accent', pickAccent(SPEC.accent || '#ffd23f', L));
+        n.style.color = 'var(--fg)';
+      }
+    }
+    const parts = {};
+    switch (s.type) {
+      case 'hook':
+        if (s.emoji) n.append(parts.emoji = el('div', 'emoji', s.emoji));
+        n.append(parts.title = el('div', 't-hook', s.title || s.text));
+        break;
+      case 'title':
+        if (s.emoji) n.append(parts.emoji = el('div', 'emoji', s.emoji));
+        n.append(parts.title = el('div', 't-title', s.title));
+        if (s.text) n.append(parts.sub = el('div', 't-sub', s.text));
+        break;
+      case 'list': {
+        if (s.title) n.append(parts.title = el('div', 't-title', s.title));
+        const list = el('div', 'list');
+        parts.items = (s.items || []).slice(0, 7).map((it, i) => { const row = el('div', 'item'); row.append(el('div', 'num', i + 1), el('div', '', it)); list.append(row); return row; });
+        n.append(list);
+        break;
+      }
+      case 'stat': {
+        // «13,8 млрд», «$1.5M», «92%», «−40 кг»: число считаем вверх, приставки/единицы сохраняем как есть
+        const m = String(s.value ?? '').match(/^([^\d-]*?)(-?\d[\d\s]*?(?:[.,]\d+)?)(\D.*)?$/);
+        parts.stat = m ? { pre: m[1], num: parseFloat(m[2].replace(/\s/g, '').replace(',', '.')), dec: (m[2].match(/[.,](\d+)$/)?.[1] || '').length, sep: (m[2].match(/[.,]/) || ['.'])[0], post: m[3] || '' } : null;
+        n.append(parts.value = el('div', 'value', s.value));
+        const len = String(s.value ?? '').length;
+        if (len > 5) parts.value.style.fontSize = `calc(var(--u) * ${Math.max(11, 26 * 5 / len)})`;
+        if (s.text) n.append(parts.sub = el('div', 't-sub', s.text));
+        break;
+      }
+      case 'quote':
+        n.append(parts.q = el('div', 'qmark', '“'));
+        n.append(parts.title = el('div', 't-text', s.text));
+        if (s.author) n.append(parts.sub = el('div', 'author', '— ' + s.author));
+        break;
+      case 'compare': {
+        if (s.title) n.append(parts.title = el('div', 't-title', s.title));
+        const wrap = el('div', 'compare'); wrap.style.position = 'relative';
+        const side = (d) => { const c = el('div', 'side'); c.append(el('h3', '', d?.title || '')); c.append(el('p', '', d?.text || '')); return c; };
+        wrap.append(parts.left = side(s.left), parts.right = side(s.right), parts.vs = el('div', 'vs', 'VS'));
+        n.append(wrap);
+        break;
+      }
+      case 'image': {
+        const w = el('div', 'imgwrap');
+        const img = new Image(); img.src = s.image || ''; imgs.push(img); w.append(img); parts.img = img;
+        w.append(el('div', 'imgshade'));
+        n.append(w);
+        if (s.title) n.append(parts.title = el('div', 'imgtitle', s.title));
+        break;
+      }
+      case 'cta':
+        if (innerHeight > innerWidth) n.style.paddingBottom = '44%'; // кнопка не уходит под субтитры
+        n.append(parts.emoji = el('div', 'emoji', s.emoji || '🔔'));
+        n.append(parts.title = el('div', 't-title', s.title || 'Подпишись'));
+        if (s.text) n.append(parts.sub = el('div', 't-sub', s.text));
+        n.append(parts.btn = el('div', 'btn', '▶ ' + (s.button || 'ПОДПИСАТЬСЯ')));
+        break;
+      default: { // text
+        const t = el('div', 't-text');
+        parts.words = words(s.text || s.title).map((w) => { const sp = el('span', 'w', w); t.append(sp); return sp; });
+        n.append(t);
+      }
+    }
+    host.append(n);
+    return { node: n, parts };
+  }
+  const built = scenes.map(build);
+
+  const cap = document.getElementById('caption');
+  document.getElementById('watermark').textContent = SPEC.watermark || '';
+  const progress = document.getElementById('progress');
+
+  // ---------- кадр на момент t ----------
+  function seek(t) {
+    t = clamp(t, 0, Math.max(0, TOTAL - 1e-4));
+    // фон
+    blobs.forEach((b, i) => {
+      const a = t * (0.12 + i * 0.05) + i * 2.1;
+      b.style.left = `${50 + Math.cos(a) * 30 - 25 - i * 5}%`;
+      b.style.top = `${50 + Math.sin(a * 1.3) * 28 - 25 + i * 4}%`;
+    });
+    progress.style.width = `${(t / TOTAL) * 100}%`;
+    let current = null;
+    scenes.forEach((s, i) => {
+      const { node, parts } = built[i];
+      const lt = t - s.start;
+      const on = lt >= 0 && lt < s.duration;
+      node.style.display = on ? 'flex' : 'none';
+      if (!on) return;
+      current = s;
+      const tr = s.transition || (i === 0 ? 'cut' : 'fade');
+      const pin = tr === 'cut' ? 1 : ease(lt / T_IN);
+      const next = scenes[i + 1];
+      const pout = next && next.transition !== 'cut' ? clamp((s.duration - lt) / T_OUT) : 1;
+      let tf = '';
+      if (tr === 'slide') tf = `translateX(${(1 - pin) * 12}%)`;
+      if (tr === 'zoom') tf = `scale(${0.85 + 0.15 * pin})`;
+      node.style.opacity = Math.min(pin, pout);
+      node.style.transform = tf;
+      animate(s, parts, lt);
+    });
+    // субтитры: караоке по словам
+    cap.textContent = '';
+    if (current && current.caption) {
+      const box = el('span', 'box');
+      const ws = words(current.caption);
+      const lt = t - current.start;
+      const k = Math.floor((lt / current.duration) * ws.length);
+      ws.forEach((w, j) => { const sp = el('span', 'cw' + (j <= k ? ' on' : ''), w + ' '); box.append(sp); });
+      cap.append(box);
+    }
+  }
+
+  function pop(e, lt, delay = 0, dur = 0.45) { if (!e) return; const p = back((lt - delay) / dur); e.style.opacity = clamp((lt - delay) / (dur * 0.6)); e.style.transform = `scale(${0.6 + 0.4 * p})`; }
+  function rise(e, lt, delay = 0, dur = 0.5) { if (!e) return; const p = ease((lt - delay) / dur); e.style.opacity = p; e.style.transform = `translateY(${(1 - p) * 6}vh)`; }
+
+  function animate(s, P, lt) {
+    switch (s.type) {
+      case 'hook': {
+        pop(P.title, lt, 0.05, 0.4);
+        const shake = lt < 0.7 ? Math.sin(lt * 60) * (0.7 - lt) * 2 : 0;
+        if (P.title) P.title.style.transform += ` rotate(${shake}deg)`;
+        if (P.emoji) { pop(P.emoji, lt, 0, 0.4); P.emoji.style.transform += ` translateY(${Math.sin(lt * 5) * 1.2}vh)`; }
+        break;
+      }
+      case 'title': if (P.emoji) pop(P.emoji, lt, 0, 0.4); rise(P.title, lt, 0.05); rise(P.sub, lt, 0.35); break;
+      case 'list': {
+        rise(P.title, lt, 0);
+        const n = P.items.length || 1, span = Math.max(0.4, (s.duration - 1.2) / n);
+        P.items.forEach((row, i) => { const p = ease((lt - 0.4 - i * span) / 0.45); row.style.opacity = p; row.style.transform = `translateX(${(1 - p) * -10}%)`; });
+        break;
+      }
+      case 'stat': {
+        pop(P.value, lt, 0, 0.45);
+        if (P.stat && !isNaN(P.stat.num)) {
+          const v = (P.stat.num * ease(lt / 1.1)).toFixed(P.stat.dec).replace('.', P.stat.sep);
+          P.value.textContent = P.stat.pre + v + P.stat.post;
+        }
+        rise(P.sub, lt, 0.5);
+        break;
+      }
+      case 'quote': pop(P.q, lt, 0, 0.5); rise(P.title, lt, 0.2); rise(P.sub, lt, 0.7); break;
+      case 'compare': {
+        rise(P.title, lt, 0);
+        const a = ease((lt - 0.2) / 0.5), b = ease((lt - 0.45) / 0.5);
+        const vert = stage.classList.contains('shorts');
+        P.left.style.opacity = a; P.left.style.transform = vert ? `translateY(${(1 - a) * -8}vh)` : `translateX(${(1 - a) * -15}%)`;
+        P.right.style.opacity = b; P.right.style.transform = vert ? `translateY(${(1 - b) * 8}vh)` : `translateX(${(1 - b) * 15}%)`;
+        pop(P.vs, lt, 0.8, 0.4);
+        break;
+      }
+      case 'image': {
+        if (P.img) P.img.style.transform = `scale(${1 + 0.12 * (lt / s.duration)}) translate(${(lt / s.duration) * -1.5}%, ${(lt / s.duration) * -1}%)`;
+        rise(P.title, lt, 0.3);
+        break;
+      }
+      case 'cta': {
+        pop(P.emoji, lt, 0, 0.4);
+        if (P.emoji) P.emoji.style.transform += ` rotate(${Math.sin(lt * 14) * 12 * Math.max(0, 1 - lt / 1.5)}deg)`;
+        rise(P.title, lt, 0.15); rise(P.sub, lt, 0.35);
+        pop(P.btn, lt, 0.5, 0.4);
+        if (P.btn && lt > 0.9) P.btn.style.transform = `scale(${1 + Math.sin((lt - 0.9) * 6) * 0.04})`;
+        break;
+      }
+      default: {
+        const ws = P.words || [], per = Math.min(0.22, Math.max(0.08, (s.duration - 0.8) / Math.max(1, ws.length)));
+        ws.forEach((w, i) => { const p = ease((lt - 0.1 - i * per) / 0.25); w.style.opacity = p; w.style.transform = `translateY(${(1 - p) * 2}vh)`; w.style.color = Math.abs(lt - 0.1 - i * per) < per ? 'var(--accent)' : ''; });
+      }
+    }
+  }
+
+  // ---------- API для рендера ----------
+  window.__duration = TOTAL;
+  window.__seek = seek;
+  const imgReady = Promise.all(imgs.map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
+  window.__ready = Promise.race([Promise.all([document.fonts.ready, imgReady]), new Promise((r) => setTimeout(r, 10000))]).then(() => seek(0));
+  window.__brokenImages = () => imgs.filter((im) => !im.naturalWidth).map((im) => im.src);
+  seek(0);
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # Образ с Chromium для браузерного агента (Боря)
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # отдельный пользователь без прав для кода, который пишут и запускают агенты

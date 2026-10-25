@@ -152,6 +152,12 @@ button { cursor: pointer; }
 .member .actions .btn { padding: 6px 10px; font-size: 13px; }
 .member .count { color: var(--muted); font-size: 12px; margin-left: auto; }
 
+.dept-head { display: flex; align-items: center; gap: 8px; margin: 6px 2px 10px; font: 600 13px var(--display); color: var(--gold); }
+.dept-head:not(:first-child) { margin-top: 18px; }
+.dept-go { margin-left: auto; border: 1px solid var(--line); background: none; border-radius: 8px; padding: 3px 8px; font: 500 12px Inter, sans-serif; color: var(--muted); }
+.dept-go:hover { color: var(--text); border-color: var(--muted); }
+.to .sep { flex: none; align-self: center; padding: 0 2px; opacity: .7; }
+
 /* лента */
 .log { display: grid; grid-template-columns: 58px 1fr; gap: 8px; padding: 7px 4px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13px; }
 .log time { color: var(--muted); font: 11px var(--mono); padding-top: 2px; }

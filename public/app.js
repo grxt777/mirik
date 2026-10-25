@@ -7,7 +7,7 @@ tg?.ready();
 tg?.expand();
 
 const AGENT_STATUS = { idle: 'свободен', thinking: 'думает', working: 'работает', managing: 'раздаёт задачи' };
-const state = { agents: {}, tasks: new Map(), openSteps: new Set(), to: 'mirik', stats: null };
+const state = { agents: {}, departments: {}, tasks: new Map(), openSteps: new Set(), to: 'mirik', stats: null };
 const coarse = matchMedia('(pointer: coarse)').matches;
 let token = null;
 try { token = localStorage.getItem('mirik_token'); } catch {}
@@ -96,6 +96,7 @@ function connect() {
 function handle(e) {
   switch (e.type) {
     case 'init':
+      state.departments = e.departments || {};
       e.agents.forEach((a) => (state.agents[a.id] = a));
       office.setAgents(e.agents);
       state.tasks = new Map(e.tasks.map((t) => [t.id, t]));
@@ -124,6 +125,7 @@ function handle(e) {
       break;
     }
     case 'delegate': office.delegate(e.from, e.to, e.text); break;
+    case 'render': office.setRender(e); break;
     case 'report': office.report(e.from); break;
     case 'log': addLog(e.entry); break;
   }
@@ -188,7 +190,7 @@ function showCard(id) {
   card.innerHTML = `
     <button class="x" data-close aria-label="Закрыть">✕</button>
     <div class="card-head"><img src="${avatarURL(a.id, a.look, 112)}" alt="">
-      <div class="card-id"><h3>${esc(a.name)}</h3><div class="role">${esc(a.role)}</div>
+      <div class="card-id"><h3>${esc(a.name)}</h3><div class="role">${esc(a.role)} · ${esc(state.departments[a.dept]?.name || '')}</div>
       <div class="card-mini"><span class="status ${a.state.status}">${AGENT_STATUS[a.state.status] || a.state.status}</span> ${/^(думает|отдыхает)/.test(a.state.activity) ? '' : esc(a.state.activity)}</div></div></div>
     <div class="now"><span class="status ${a.state.status}">${AGENT_STATUS[a.state.status] || a.state.status}</span>
       <div style="margin-top:6px">${esc(a.state.activity)}</div>
@@ -289,9 +291,13 @@ $('#jump').addEventListener('click', () => scrollChat(true));
 // ---------- команда ----------
 function renderTeam() {
   const tasks = [...state.tasks.values()];
+  let lastDept = null;
   $('#v-team').innerHTML = Object.values(state.agents).map((a) => {
+    const d = state.departments[a.dept];
+    const head = a.dept !== lastDept && d ? `<div class="dept-head">${d.emoji} ${esc(d.name)}${a.dept !== 'hq' ? `<button class="dept-go" data-area="${a.dept}">📍 на карте</button>` : ''}</div>` : '';
+    lastDept = a.dept;
     const done = tasks.reduce((n, t) => n + t.steps.filter((s) => s.agent === a.id && s.text.startsWith('✅')).length, 0);
-    return `<div class="member">
+    return `${head}<div class="member">
       <img src="${avatarURL(a.id, a.look, 104)}" alt="">
       <div>
         <h4>${esc(a.name)} <span class="status ${a.state.status}">${AGENT_STATUS[a.state.status]}</span><span class="count">✅ ${done}</span></h4>
@@ -306,6 +312,8 @@ $('#v-team').addEventListener('click', (e) => {
   if (as) { setTo(as.dataset.assign); switchTab('chat'); $('#msg').focus(); }
   const sh = e.target.closest('[data-show]');
   if (sh) { office.focus(sh.dataset.show); showCard(sh.dataset.show); renderCrew(); }
+  const ar = e.target.closest('[data-area]');
+  if (ar) office.goToArea(ar.dataset.area);
 });
 
 // ---------- лента ----------
@@ -332,8 +340,12 @@ document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('cli
 
 // ---------- композер ----------
 function renderTo() {
-  $('#to').innerHTML = Object.values(state.agents).map((a) =>
-    `<button type="button" data-to="${a.id}" class="${state.to === a.id ? 'on' : ''}"><img src="${avatarURL(a.id, a.look)}" alt="">${esc(a.name)}</button>`).join('');
+  let lastDept = null;
+  $('#to').innerHTML = Object.values(state.agents).map((a) => {
+    const sep = lastDept && a.dept !== lastDept ? `<span class="sep">${state.departments[a.dept]?.emoji || '·'}</span>` : '';
+    lastDept = a.dept;
+    return `${sep}<button type="button" data-to="${a.id}" class="${state.to === a.id ? 'on' : ''}"><img src="${avatarURL(a.id, a.look)}" alt="">${esc(a.name)}</button>`;
+  }).join('');
   const a = state.agents[state.to];
   $('#msg').placeholder = state.to === 'mirik' ? 'Задание для Мирика…' : `${a?.name}, вот задание…`;
 }
@@ -508,6 +520,8 @@ document.querySelector('.world-tools').addEventListener('click', (e) => {
   if (z === 'out') office.zoomBy(1 / 1.35);
   if (z === 'fit') office.fit();
   if (z === 'expand') $('#app').classList.toggle('expanded');
+  const area = e.target.closest('[data-area]')?.dataset.area;
+  if (area) office.goToArea(area);
 });
 const hideHint = () => $('#hint').style.opacity = '0';
 setTimeout(hideHint, 7000);

@@ -8,7 +8,7 @@ import { InputFile } from 'grammy';
 import { config } from './config.js';
 import { store, save } from './store.js';
 import { bus, recentLogs } from './bus.js';
-import { AGENT_LIST } from './agents/registry.js';
+import { AGENT_LIST, DEPARTMENTS } from './agents/registry.js';
 import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
 import { bot, ownerChats, homeChat } from './bot.js';
 import { usageReport, watchBalance } from './billing.js';
@@ -35,6 +35,7 @@ const publicTask = (t) => ({ ...t, steps: t.steps.slice(-40) });
 
 function snapshot() {
   return {
+    departments: DEPARTMENTS,
     agents: AGENT_LIST.map(({ prompt, tools, ...a }) => ({ ...a, tools, state: agentState[a.id] })),
     tasks: store.tasks.slice(-60).map(publicTask),
     logs: recentLogs(),

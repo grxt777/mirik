@@ -72,6 +72,13 @@ async function snapshot(page) {
 
 const el = (page, id) => page.locator(`[data-mirik="${id}"]`).first();
 
+// Отдельная страница под рендер роликов/обложек: точный размер кадра, без масштабирования
+export async function newRenderPage(width, height) {
+  const browser = await getBrowser();
+  const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+  return context.newPage();
+}
+
 // PDF из HTML (для make_document) — тем же Chromium
 export async function htmlToPdf(html, file) {
   const browser = await getBrowser();

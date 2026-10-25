@@ -9,6 +9,7 @@ import { webTools } from '../tools/web.js';
 import { fileTools } from '../tools/files.js';
 import { browserTools, closeTaskPage } from '../tools/browser.js';
 import { docTools } from '../tools/docs.js';
+import { videoTools } from '../tools/video.js';
 import { scrub, scrubAll, addJournal, recallFor, officeState, compressHistory } from '../memory.js';
 
 // Расход: лимит токенов на одну задачу (вся команда вместе) — примерно $0.02 по цене самого дешёвого провайдера
@@ -149,7 +150,7 @@ const builtinTools = [
   },
 ];
 
-const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...docTools].map((t) => [t.name, t]));
+const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...docTools, ...videoTools].map((t) => [t.name, t]));
 
 const toolSchema = (t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } });
 
@@ -168,6 +169,11 @@ function activityLabel(name, args) {
     case 'browser_download': return 'скачивает файл';
     case 'read_document': return `читает ${short(args.path)}`;
     case 'make_document': return `оформляет ${short(args.path)}`;
+    case 'build_video': return args.quality === 'draft' ? 'собирает черновик ролика' : 'монтирует ролик';
+    case 'render_video': return 'рендерит свой монтаж';
+    case 'render_image': return 'делает обложку';
+    case 'download_media': return 'качает медиа';
+    case 'youtube_search': return `смотрит YouTube: «${short(args.query, 30)}»`;
     case 'delegate': return `поручает ${AGENTS[args.agent]?.name || ''}`;
     case 'ask_sanya': return 'пишет Сане';
     case 'send_file': return 'отправляет файл';

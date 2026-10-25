@@ -6,7 +6,7 @@ import { config } from './config.js';
 import { store, save } from './store.js';
 import * as memdb from './memdb.js';
 import { bus, log } from './bus.js';
-import { AGENTS, AGENT_LIST } from './agents/registry.js';
+import { AGENTS, AGENT_LIST, DEPARTMENTS } from './agents/registry.js';
 import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
 import { wsPath } from './tools/files.js';
 import { usageReport } from './billing.js';
@@ -142,10 +142,13 @@ function officeKeyboard() {
 }
 
 function teamText() {
-  return '👥 Команда офиса:\n\n' + AGENT_LIST.map((a) => {
-    const s = agentState[a.id];
-    return `${a.emoji} ${a.name} — ${a.role}\n   ${STATUS_ICON[s.status] || ''} ${s.activity}`;
-  }).join('\n\n') + '\n\nНапрямую: /timur /liza /borya /nika + задание';
+  return '👥 Команда офиса\n\n' + Object.values(DEPARTMENTS).map((d) => {
+    const people = AGENT_LIST.filter((a) => a.dept === d.id).map((a) => {
+      const s = agentState[a.id];
+      return `${a.emoji} ${a.name} — ${a.role}\n   ${STATUS_ICON[s.status] || ''} ${s.activity}`;
+    });
+    return `${d.emoji} ${d.name}\n${people.join('\n')}`;
+  }).join('\n\n') + '\n\nНапрямую: ' + AGENT_LIST.filter((a) => a.id !== 'mirik').map((a) => '/' + a.id).join(' ') + ' + задание';
 }
 
 function tasksText() {
@@ -222,7 +225,7 @@ export function startBot() {
 
   bot.command('start', (ctx) =>
     ctx.reply(
-      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
+      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня два департамента:\n🏢 Операционный — программист, исследователь, оператор браузера и отличница.\n🎬 Ютуберов — продюсер, сценаристка и монтажёр: делают Shorts и ролики под ключ.\n\nПросто напиши задание — я раздам его своим и пришлю результат. Например: «сделайте шортс про 3 факта о кофе».\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
       { reply_markup: officeKeyboard() }
     )
   );
@@ -336,6 +339,11 @@ export function startBot() {
     try {
       const file = await ctx.api.getFile(media.file_id);
       const audio = Buffer.from(await (await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`)).arrayBuffer());
+      // сохраняем и сам звук — пригодится как озвучка для ролика
+      const ext = (file.file_path.split('.').pop() || 'ogg').replace('oga', 'ogg');
+      const saved = `inbox/voice_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
+      await fs.mkdir(path.dirname(wsPath(saved)), { recursive: true });
+      await fs.writeFile(wsPath(saved), audio);
       const res = await fetch(`${config.sanyaUrl}/link/transcribe`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${config.linkToken}`, 'Content-Type': 'application/json' },
@@ -348,7 +356,7 @@ export function startBot() {
       if (!text) return ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Саня не расслышал — попробуй ещё раз');
       await ctx.api.editMessageText(ctx.chat.id, note.message_id, `🎙 Саня расшифровал: «${text.slice(0, 3800)}»`);
       log('mirik', '🎙 Саня расшифровал голосовое', 'delegate');
-      handleTask(ctx, { text: (m.caption ? m.caption + '\n' : '') + text });
+      handleTask(ctx, { text: (m.caption ? m.caption + '\n' : '') + text + `\n[голосовое сохранено: ${saved} — можно использовать как озвучку]` });
     } catch (e) {
       await ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Саня не смог расшифровать: ' + e.message).catch(() => {});
     }

@@ -1,6 +1,9 @@
 // Игровой офис v2: детальная пиксельная графика, освещение, камера (зум/панорама), агенты и кот.
 export const T = 32;
-export const W = 24;
+export const W = 36;
+// x < 23 — операционный департамент и кабинет Мирика, x = 23 — стена с дверью, x > 23 — студия ютуберов
+const STUDIO_X = 24;
+const DOOR_Y = 10;
 export const H = 17;
 const WW = W * T;
 const WH = H * T;
@@ -33,7 +36,8 @@ const block = (x, y, w = 1, h = 1) => { for (let i = 0; i < w; i++) for (let j =
 for (let x = 0; x < W; x++) { block(x, 0); block(x, 1); block(x, H - 1); }
 for (let y = 0; y < H; y++) { block(0, y); block(W - 1, y); }
 for (let y = 2; y <= 7; y++) block(15, y);              // стекло кабинета (вертикаль)
-for (let x = 16; x < W - 1; x++) if (x !== 19) block(x, 7); // стекло кабинета (низ), дверь x=19
+for (let x = 16; x < 23; x++) if (x !== 19) block(x, 7); // стекло кабинета (низ), дверь x=19
+for (let y = 2; y < H - 1; y++) if (y !== DOOR_Y) block(23, y); // стена между департаментами, дверь из переговорки
 
 const furniture = [];
 function add(kind, x, y, w = 1, h = 1, extra = {}) {
@@ -73,6 +77,19 @@ add('fridge', 22, 15);
 add('vending', 16, 15);
 add('bistro', 18, 13);
 add('plant', 22, 12);
+// студия Департамента ютуберов
+add('greenscreen', 32, 2, 3, 1);
+add('ringlight', 33, 5);
+add('camera', 34, 6);
+add('editbay', 29, 9, 3, 1);
+add('rug', 28, 12, 5, 3, { walkable: true, flat: true, studio: true });
+add('beanbag', 25, 14, 1, 1, { color: '#e84393' });
+add('beanbag', 27, 14, 1, 1, { color: '#00b894' });
+add('minifridge', 34, 13);
+add('plant', 24, 15);
+add('plant', 34, 15, 1, 1, { big: true });
+add('plant', 24, 2, 1, 1, { big: true });
+add('tripod', 33, 9);
 
 // точки интереса: tile — куда идти, dir — куда смотреть, sit — сесть (px)
 const POIS = [
@@ -98,8 +115,20 @@ const POIS = [
   { x: 18, y: 2, dir: 'up', say: '🌇 думаю о вечном', who: 'mirik' },
   { x: 21, y: 3, dir: 'up', say: '📚 перечитываю', who: 'mirik' },
   { x: 17, y: 5, dir: 'right', say: '📞 переговоры', who: 'mirik' },
+  // студия
+  { x: 33, y: 3, dir: 'down', say: '🎥 пишем дубль', who: 'yt' },
+  { x: 32, y: 5, dir: 'right', say: '💡 свет норм?', who: 'yt' },
+  { x: 33, y: 13, dir: 'right', say: '⚡ энергетик', who: 'yt' },
+  { x: 26, y: 13, dir: 'down', say: '🧠 мозговой штурм', who: 'yt' },
+  { x: 30, y: 11, dir: 'up', say: '🎞 смотрю монтаж', who: 'yt' },
+  { x: 29, y: 13, dir: 'down', say: '📱 листаю шортсы', who: 'yt' },
+  { x: 31, y: 2, dir: 'up', say: '🏆 когда золотая кнопка?', who: 'yt' },
+  { x: 21, y: 10, dir: 'right', say: '🚪 к соседям', who: 'yt' },
 ];
-const CAT_SPOTS = [{ x: 12, y: 14 }, { x: 4, y: 12 }, { x: 18, y: 12 }, { x: 9, y: 11 }, { x: 20, y: 8 }, { x: 5, y: 6 }];
+const CAT_SPOTS = [{ x: 12, y: 14 }, { x: 4, y: 12 }, { x: 18, y: 12 }, { x: 9, y: 11 }, { x: 20, y: 8 }, { x: 5, y: 6 }, { x: 29, y: 12 }, { x: 25, y: 11 }, { x: 33, y: 7 }];
+// подписи департаментов (в мировых координатах)
+const DEPT_SIGNS = [{ x: 8 * T, y: 2.1 * T, text: '🏢 Операционный департамент' }, { x: 29.5 * T, y: 2.1 * T, text: '🎬 Департамент ютуберов' }];
+export const AREAS = { ops: { x: 11.5 * T, y: 8.5 * T }, yt: { x: 29.5 * T, y: 8.5 * T } };
 
 const free = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !blocked.has(key(x, y));
 function findPath(sx, sy, tx, ty) {
@@ -313,7 +342,7 @@ function drawCat(c, x, y, o) {
 }
 
 // ---------- экраны мониторов ----------
-const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash' };
+const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash', vlad: 'trends', arina: 'script', gosha: 'timeline' };
 function drawScreen(c, x, y, w, h, kind, busy, t, seed) {
   if (!kind) { px(c, x, y, w, h, '#0e1018'); px(c, x + 2, y + 2, 4, 1, 'rgba(255,255,255,.08)'); return; }
   if (!busy) {
@@ -350,6 +379,23 @@ function drawScreen(c, x, y, w, h, kind, busy, t, seed) {
     px(c, x + 3, y + 2, 10, 1.6, '#e84393');
     for (let i = 0; i < 4; i++) px(c, x + 3, y + 6 + i * 3, i === 3 ? ((t * 6) % (w - 6)) : w - 6 - (i % 2) * 5, 1, '#6b6478');
     px(c, x + w - 8, y + 2, 5, 3, '#ffeaa7');
+  } else if (kind === 'trends') {
+    px(c, x, y, w, h, '#181818');
+    px(c, x + 2, y + 2, 6, 4, '#ff0033'); px(c, x + 4, y + 3, 2, 2, '#fff');
+    let py = y + h - 3;
+    for (let i = 0; i < 6; i++) { const ny = y + h - 3 - (i * 2 + ((Math.sin(t * 1.4 + i) + 1) * 1.5)); px(c, x + 3 + i * 3.6, Math.min(py, ny), 2, Math.abs(py - ny) + 1, '#2ecc71'); py = ny; }
+    px(c, x + w - 9, y + 2, 7, 1.2, '#aaa');
+  } else if (kind === 'script') {
+    px(c, x, y, w, h, '#fffdf7');
+    px(c, x + 3, y + 2, 8, 1.4, '#e17055');
+    for (let i = 0; i < 4; i++) px(c, x + (i % 2 ? 7 : 3), y + 6 + i * 3, i === 3 ? ((t * 7) % (w - 10)) : w - 10 - (i % 2) * 4, 1, i % 2 ? '#636e72' : '#2d3436');
+    px(c, x + w - 6, y + 6, 3, 8, 'rgba(255,200,60,.5)');
+  } else if (kind === 'timeline') {
+    px(c, x, y, w, h, '#1b1d26');
+    px(c, x + 2, y + 2, w - 4, 6, '#2d3142');
+    const cols = ['#ff7a2f', '#2ec4b6', '#6c5ce7', '#ffd23f'];
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 3; k++) px(c, x + 2 + k * 8 + r * 2, y + 9 + r * 2.4, 6, 1.8, cols[(r + k) % 4]);
+    px(c, x + 2 + ((t * 6) % (w - 4)), y + 8, 0.8, h - 9, '#fff');
   } else {
     px(c, x, y, w, h, '#151a2c');
     for (let i = 0; i < 5; i++) { const bh = 3 + ((Math.sin(t * 1.5 + i * 1.3) + 1) / 2) * (h - 8); px(c, x + 3 + i * 4, y + h - 2 - bh, 3, bh, i % 2 ? '#ffd23f' : '#5dade2'); }
@@ -363,8 +409,11 @@ const GLYPHS = {
   borya: ['🖱', '🌐', '⌨', '↗', '🔑'],
   nika: ['∑', '✎', 'π', 'A+', '√x', '📐'],
   mirik: ['📣', '✔', '💼', '📊'],
+  vlad: ['📈', '🔥', '👀', '#'],
+  arina: ['✍️', '🎬', '💡', '“ ”'],
+  gosha: ['🎞', '✂️', '▶', '🎧'],
 };
-const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80' };
+const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80', vlad: '255,80,90', arina: '255,200,60', gosha: '255,140,50' };
 const EMPTY_DESKS = [{ x: 10, y: 4 }, { x: 10, y: 8 }];
 
 export class Office {
@@ -419,7 +468,8 @@ export class Office {
 
   fit() {
     const fitBoth = Math.min(this.vw / WW, this.vh / WH);
-    const narrow = this.vw / this.vh < (WW / WH) * 0.8;
+    // весь офис, если он помещается читаемо (компьютер); иначе (телефон) — крупно операционный отдел
+    const narrow = fitBoth < 0.55;
     const z = narrow ? Math.min(this.vh / WH, fitBoth * 1.9) : fitBoth;
     this.camT = { x: narrow ? 8.5 * T : WW / 2, y: WH / 2, z };
     this.follow = null;
@@ -613,7 +663,8 @@ export class Office {
       return;
     }
     const taken = new Set([...this.agents.values()].map((x) => x.poi).filter(Boolean));
-    const pois = POIS.filter((p) => !taken.has(p) && (p.who === 'all' || (a.boss ? p.who === 'mirik' : p.who === 'staff')));
+    const mine = a.boss ? 'mirik' : a.dept === 'yt' ? 'yt' : 'staff';
+    const pois = POIS.filter((p) => !taken.has(p) && (p.who === 'all' || p.who === mine));
     if (Math.random() < 0.5 && pois.length) {
       const p = pois[Math.floor(Math.random() * pois.length)];
       a.poi = p;
@@ -736,10 +787,17 @@ export class Office {
     const r = rng(42);
     for (let y = 2; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
       const X = x * T, Y = y * T;
-      const office = x >= 16 && y <= 6;
-      const meeting = x >= 16 && y >= 8 && y <= 11;
-      const kitchen = x >= 16 && y >= 12;
-      if (office) {
+      const studio = x >= STUDIO_X;
+      const office = !studio && x >= 16 && y <= 6;
+      const meeting = !studio && x >= 16 && y >= 8 && y <= 11;
+      const kitchen = !studio && x >= 16 && y >= 12;
+      if (x === 23) {
+        px(c, X, Y, T, T, '#2f2a3d');
+      } else if (studio) {
+        px(c, X, Y, T, T, (x + y) % 2 ? '#262833' : '#2b2d39');
+        px(c, X, Y, T, 1, 'rgba(255,255,255,.04)'); px(c, X, Y, 1, T, 'rgba(0,0,0,.25)');
+        if (r() < 0.25) px(c, X + r() * T, Y + r() * T, 2, 1, 'rgba(255,255,255,.05)');
+      } else if (office) {
         px(c, X, Y, T, T, '#4a3658');
         for (let i = 0; i < 6; i++) px(c, X + r() * T, Y + r() * T, 1, 1, 'rgba(255,255,255,.06)');
       } else if (meeting) {
@@ -763,15 +821,24 @@ export class Office {
     }
     // стены сверху
     for (let x = 0; x < W; x++) {
-      const boss = x >= 15;
+      const studio = x >= 23;
+      const boss = !studio && x >= 15;
       const X = x * T;
-      px(c, X, 0, T, 46, boss ? '#3d3456' : '#ece2cf');
-      px(c, X, 0, T, 4, boss ? '#2c2540' : '#d9cdb5');
-      px(c, X, 46, T, 12, boss ? '#2f2845' : '#b98e63');
+      px(c, X, 0, T, 46, studio ? '#1d1c2b' : boss ? '#3d3456' : '#ece2cf');
+      px(c, X, 0, T, 4, studio ? '#15141f' : boss ? '#2c2540' : '#d9cdb5');
+      px(c, X, 46, T, 12, studio ? '#16151f' : boss ? '#2f2845' : '#b98e63');
       px(c, X + 15, 47, 1, 10, 'rgba(0,0,0,.18)');
       px(c, X, 46, T, 1, 'rgba(255,255,255,.18)');
-      px(c, X, 58, T, 6, boss ? '#211c33' : '#7a5636');
+      px(c, X, 58, T, 6, studio ? '#0f0e16' : boss ? '#211c33' : '#7a5636');
+      if (studio && x > 23) {
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) { px(c, X + 2 + i * 15, 8 + j * 12, 13, 10, (i + j + x) % 2 ? '#27253a' : '#2f2c45'); px(c, X + 2 + i * 15, 8 + j * 12, 13, 2, 'rgba(255,255,255,.05)'); }
+      }
     }
+    px(c, STUDIO_X * T, 62, (W - 1 - STUDIO_X) * T, 2, 'rgba(255,0,200,.55)');
+    px(c, 23 * T + 8, 2 * T, 16, (H - 3) * T, '#3d3852');
+    px(c, 23 * T + 8, 2 * T, 2, (H - 3) * T, 'rgba(255,255,255,.12)');
+    px(c, 23 * T, DOOR_Y * T, T, T, '#3a3449');
+    px(c, 23 * T + 4, DOOR_Y * T - 3, T - 8, 3, '#9aa7b8'); px(c, 23 * T + 4, (DOOR_Y + 1) * T, T - 8, 3, '#9aa7b8');
     const g = c.createLinearGradient(0, 64, 0, 78);
     g.addColorStop(0, 'rgba(0,0,0,.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
     c.fillStyle = g; c.fillRect(T, 64, WW - 2 * T, 14);
@@ -832,6 +899,22 @@ export class Office {
     hand(((d.getHours() % 12) + d.getMinutes() / 60) * Math.PI / 6, 5, 2);
     hand(d.getMinutes() * Math.PI / 30, 7, 1.2);
     c.strokeStyle = '#e74c3c'; hand(d.getSeconds() * Math.PI / 30, 7.5, 0.6);
+    // студия: неоновая вывеска и «кнопки» YouTube
+    const nx = 24.5 * T, ny = 10;
+    box(c, nx, ny, 3 * T + 6, 30, '#120f1c', { outline: '#05040a' });
+    const flick = 0.75 + 0.25 * Math.sin(this.t * 3) * Math.sin(this.t * 7.3);
+    c.save();
+    c.shadowColor = '#ff2bd6'; c.shadowBlur = 14 * flick;
+    c.font = '900 15px Montserrat, Inter, sans-serif'; c.textAlign = 'left';
+    c.fillStyle = `rgba(255,140,240,${0.7 + 0.3 * flick})`; c.fillText('▶ STUDIO', nx + 9, ny + 21);
+    c.restore();
+    [['#c9d1da', 'SILVER'], ['#f5c542', 'GOLD'], ['#b9f2ff', 'DIAMOND']].forEach(([col, label], i) => {
+      const bx = 28.2 * T + i * 30, by = 12;
+      box(c, bx, by, 24, 30, '#2a2438', { outline: '#0d0b14' });
+      px(c, bx + 3, by + 3, 18, 20, col); px(c, bx + 3, by + 3, 18, 4, 'rgba(255,255,255,.35)');
+      c.fillStyle = '#ff0033'; c.beginPath(); c.moveTo(bx + 9, by + 8); c.lineTo(bx + 9, by + 18); c.lineTo(bx + 17, by + 13); c.fill();
+      c.font = '700 3.5px Inter, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#fff'; c.fillText(label, bx + 12, by + 27.5);
+    });
     // табличка
     box(c, 19 * T - 12, 7 * T - 30, 46, 9, '#e0b04a', { outline: '#6b4e1f' });
     c.fillStyle = '#2a2440'; c.font = '700 7px Inter, sans-serif'; c.textAlign = 'center'; c.fillText('BOSS ROOM', 19 * T + 11, 7 * T - 23);
@@ -894,6 +977,7 @@ export class Office {
     // UI в экранных координатах
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const showNames = z > 0.62;
+    for (const d of DEPT_SIGNS) this.drawSign(c, d);
     for (const a of this.agents.values()) if (showNames || a.id === this.selected || a === this.hover) this.drawLabel(c, a);
     for (const a of [...this.agents.values(), this.cat]) this.drawBubble(c, a);
   }
@@ -922,9 +1006,15 @@ export class Office {
       if (f.kind === 'vending') light(f.x * T + 16, f.y * T, 44, 0.7);
       if (f.kind === 'counter') light((f.x + 2.5) * T, f.y * T, 80, 0.8);
       if (f.kind === 'server') light(f.x * T + 16, f.y * T, 34, 0.5);
+      if (f.kind === 'ringlight') light(f.x * T + 16, f.y * T - 10, 85, 0.95);
+      if (f.kind === 'tripod') light(f.x * T + 16, f.y * T - 10, 80, 0.85);
+      if (f.kind === 'editbay') light((f.x + 1.5) * T, f.y * T, 70, 0.8);
+      if (f.kind === 'minifridge') light(f.x * T + 16, f.y * T, 34, 0.6);
+      if (f.kind === 'greenscreen') light((f.x + 1.5) * T, f.y * T, 60, 0.5);
     }
     for (const a of this.agents.values()) if (a.busy && a.sittingAt === a.seat) light(a.seat.x, a.seat.y - 30, 50, 0.8);
     light(19 * T, 9.5 * T, 90, 0.6);
+    light(26 * T, 1.2 * T, 110, 0.75); // неон
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.drawImage(L, 0, 0);
     // тёплые блики
@@ -967,8 +1057,13 @@ export class Office {
     const shadow = (dx = 0) => { c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(X + 3 + dx, Y + h - 3, w - 2, 5); };
     switch (f.kind) {
       case 'rug':
+        if (f.studio) {
+          box(c, X + 4, Y + 4, w - 8, h - 8, '#191a24', { outline: '#0c0d13' });
+          c.strokeStyle = 'rgba(0,229,255,.55)'; c.lineWidth = 2; c.strokeRect(X + 10, Y + 10, w - 20, h - 20);
+          c.fillStyle = 'rgba(255,0,200,.5)'; c.beginPath(); c.moveTo(X + w / 2 - 8, Y + h / 2 - 10); c.lineTo(X + w / 2 - 8, Y + h / 2 + 10); c.lineTo(X + w / 2 + 10, Y + h / 2); c.fill();
+          break;
+        }
         if (f.boss) {
-          box(c, X + 4, Y - 4, w - 8, h - 2, '#7b2d43', { outline: '#4d1a29' });
           c.strokeStyle = '#e0b04a'; c.lineWidth = 2; c.strokeRect(X + 9, Y + 1, w - 18, h - 12);
           for (let i = 0; i < 4; i++) px(c, X + 24 + i * 30, Y + h / 2 - 6, 6, 6, '#b04a63');
         } else {
@@ -1139,6 +1234,68 @@ export class Office {
         px(c, X + 23, Y - 20, 4, 10, '#95a5a6'); px(c, X + 6, Y + 14, 16, 6, '#111');
         break;
       }
+      case 'greenscreen': {
+        px(c, X + 2, Y - 40, 3, h + 40, '#3b3e4a'); px(c, X + w - 5, Y - 40, 3, h + 40, '#3b3e4a');
+        box(c, X + 6, Y - 38, w - 12, 52, '#22c55e', { hi: '#4ade80' });
+        for (let i = 1; i < 6; i++) px(c, X + 6 + i * (w - 12) / 6, Y - 36, 1, 50, 'rgba(0,0,0,.08)');
+        px(c, X + 6, Y + 14, w - 12, 14, '#16a34a');
+        break;
+      }
+      case 'ringlight': {
+        ellipse(c, X + 16, Y + 28, 9, 3, 'rgba(0,0,0,.25)');
+        px(c, X + 15, Y - 6, 2, 34, '#2b2b33'); px(c, X + 8, Y + 26, 16, 2, '#2b2b33');
+        c.strokeStyle = OUT; c.lineWidth = 7; c.beginPath(); c.arc(X + 16, Y - 14, 11, 0, Math.PI * 2); c.stroke();
+        c.strokeStyle = '#fffbe6'; c.lineWidth = 5; c.beginPath(); c.arc(X + 16, Y - 14, 11, 0, Math.PI * 2); c.stroke();
+        box(c, X + 13, Y - 19, 6, 10, '#111');
+        break;
+      }
+      case 'camera': {
+        const rec = [...this.agents.values()].some((a) => a.dept === 'yt' && a.busy);
+        ellipse(c, X + 16, Y + 28, 9, 3, 'rgba(0,0,0,.25)');
+        px(c, X + 15, Y - 2, 2, 28, '#2b2b33'); px(c, X + 7, Y + 26, 3, 2, '#2b2b33'); px(c, X + 22, Y + 26, 3, 2, '#2b2b33');
+        box(c, X + 6, Y - 14, 20, 13, '#1b1b22', { hi: '#34343f' });
+        box(c, X + 1, Y - 11, 6, 7, '#2b2b33');
+        ellipse(c, X + 3, Y - 7.5, 2.5, 2.5, '#6c8cff');
+        if (rec && Math.sin(this.t * 5) > 0) ellipse(c, X + 22, Y - 11, 2, 2, '#ff2d2d');
+        break;
+      }
+      case 'tripod': {
+        ellipse(c, X + 16, Y + 28, 9, 3, 'rgba(0,0,0,.25)');
+        px(c, X + 15, Y - 6, 2, 34, '#2b2b33'); px(c, X + 8, Y + 26, 16, 2, '#2b2b33');
+        box(c, X + 4, Y - 26, 24, 20, '#2b2b33');
+        px(c, X + 6, Y - 24, 20, 16, '#fff7e0');
+        break;
+      }
+      case 'editbay': {
+        shadow();
+        box(c, X, Y + 8, w, 12, '#2a2c38', { hi: '#3a3d4c' });
+        px(c, X + 4, Y + 20, 3, 10, '#1d1f28'); px(c, X + w - 7, Y + 20, 3, 10, '#1d1f28');
+        const r = this.render && this.t - this.render.at < 6 ? this.render : null;
+        for (let i = 0; i < 3; i++) {
+          const mx = X + 3 + i * 31, my = Y - 16;
+          box(c, mx, my, 28, 20, '#16171f');
+          if (r && i === 1) {
+            px(c, mx + 2, my + 2, 24, 16, '#0b0c12');
+            px(c, mx + 3, my + 12, 22, 3, '#2d3142'); px(c, mx + 3, my + 12, 22 * (r.pct / 100), 3, r.pct >= 100 ? '#2ecc71' : '#ff7a2f');
+            c.font = '700 5px Inter, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#fff';
+            c.fillText(r.pct >= 100 ? 'ГОТОВО ✓' : `${r.pct}%`, mx + 14, my + 9);
+          } else drawScreen(c, mx + 2, my + 2, 24, 16, i === 1 ? 'timeline' : i === 0 ? 'trends' : 'script', this.agents.get('gosha')?.busy || !!r, this.t + i, 7 + i);
+        }
+        box(c, X + w / 2 - 12, Y + 10, 24, 5, '#d9dce3', { outline: '#6b6f7c' });
+        break;
+      }
+      case 'beanbag':
+        ellipse(c, X + 16, Y + 26, 14, 5, 'rgba(0,0,0,.25)');
+        ellipse(c, X + 16, Y + 16, 15, 12, OUT); ellipse(c, X + 16, Y + 16, 14, 11, f.color);
+        ellipse(c, X + 12, Y + 12, 6, 4, 'rgba(255,255,255,.25)');
+        break;
+      case 'minifridge':
+        shadow();
+        box(c, X + 5, Y - 8, 22, 34, '#d7dbe2', { hi: '#f0f2f5' });
+        px(c, X + 8, Y - 5, 16, 22, 'rgba(120,200,255,.35)');
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 4; j++) px(c, X + 9 + j * 4, Y - 3 + i * 10, 3, 7, ['#00e676', '#ff1744', '#2979ff', '#ffd600'][(i + j) % 4]);
+        px(c, X + 22, Y - 2, 2, 10, '#9aa0ad');
+        break;
       case 'bistro':
         ellipse(c, X + 16, Y + 28, 13, 4, 'rgba(0,0,0,.2)');
         px(c, X + 14, Y + 12, 4, 16, '#555');
@@ -1194,6 +1351,31 @@ export class Office {
   headPos(a) {
     const top = a.isCat ? 22 : a.sitting ? 38 : 52;
     return this.toScreen(a.x, a.y - top);
+  }
+
+  drawSign(c, d) {
+    const p = this.toScreen(d.x, d.y);
+    if (p.x < -200 || p.x > this.vw + 200 || p.y < -30 || p.y > this.vh + 30) return;
+    c.font = '700 12px Inter, system-ui, sans-serif';
+    const w = c.measureText(d.text).width + 20;
+    c.fillStyle = 'rgba(18,16,28,.78)';
+    c.beginPath(); c.roundRect(p.x - w / 2, p.y - 11, w, 22, 11); c.fill();
+    c.fillStyle = '#ffd23f'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(d.text, p.x, p.y + 0.5);
+    c.textBaseline = 'alphabetic';
+  }
+
+  // прогресс рендера на монтажной стене
+  setRender({ pct, label }) { this.render = { pct, label, at: this.t }; }
+
+  // камера к департаменту
+  goToArea(name) {
+    const a = AREAS[name];
+    if (!a) return;
+    const width = name === 'yt' ? 13 * T : 24 * T;
+    this.camT = { x: a.x, y: a.y, z: Math.max(this.minZ, Math.min(this.maxZ, Math.min(this.vw / width, this.vh / WH) * 0.98)) };
+    this.follow = null;
+    this.userMoved = true;
   }
 
   drawLabel(c, a) {
