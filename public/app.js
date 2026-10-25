@@ -469,7 +469,18 @@ function renderBudget() {
       <div class="note">Саня работает на Gemini от Google и бесплатных моделях — баланс OpenRouter он не тратит.</div>
     </section>`);
   }
-  if (r.price) parts.push(`<div class="note center">Цена ${esc(r.model)}: $${r.price.prompt.toFixed(2)} за 1 млн входных и $${r.price.completion.toFixed(2)} за 1 млн выходных токенов · обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>`);
+  if (r.price) {
+    const p4 = (n) => '$' + n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+    const basis = { real7d: 'по твоим реальным тратам за 7 дней', real: 'по твоим реальным тратам', list: 'по прайсу провайдера' }[est?.basis] || '';
+    parts.push(`<section class="bcard"><h4>💲 Цена ${esc(r.model)}</h4>
+      <div class="kpis small">
+        <div><b>${est ? p4(est.blendedPerM) : '—'}</b><span>за 1 млн токенов — фактически</span></div>
+        <div><b>${p4(r.price.prompt)}</b><span>1 млн входных</span></div>
+        <div><b>${p4(r.price.completion)}</b><span>1 млн выходных</span></div>
+      </div>
+      <div class="note">Запросы идут к самому дешёвому провайдеру — сейчас это ${esc(r.price.provider)}. Если он недоступен, OpenRouter сам берёт следующего по цене.${r.price.official ? ` Официальная цена Z.AI для сравнения: ${p4(r.price.official.prompt)} / ${p4(r.price.official.completion)}.` : ''} Прогноз «на сколько хватит» посчитан ${basis}.</div>
+      <div class="note">Обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div></section>`);
+  }
   $('#v-budget').innerHTML = parts.join('');
 }
 

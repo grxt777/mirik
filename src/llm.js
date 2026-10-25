@@ -25,7 +25,8 @@ function recordUsage(u, agent) {
 }
 
 export async function chat({ messages, tools, temperature = 0.4, maxTokens = 4000, agent }) {
-  const body = { model: config.model, messages, temperature, max_tokens: maxTokens };
+  // та же модель, но у самого дешёвого провайдера; если он недоступен, OpenRouter возьмёт следующий по цене
+  const body = { model: config.model, messages, temperature, max_tokens: maxTokens, provider: { sort: 'price' } };
   if (tools?.length) body.tools = tools;
 
   let lastErr;

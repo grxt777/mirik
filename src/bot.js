@@ -148,7 +148,8 @@ async function balanceText() {
     const total = Object.values(r.sanya.by_model).reduce((n, m) => n + m.total, 0);
     lines.push('', `🤝 Саня (14 дней): ${bigNum(total)} токенов — Gemini и бесплатные модели, с баланса OpenRouter не списываются`);
   }
-  if (r.price) lines.push('', `Цена ${r.model}: $${r.price.prompt.toFixed(2)} / 1 млн вход, $${r.price.completion.toFixed(2)} / 1 млн выход`);
+  if (r.price) lines.push('', `Цена ${r.model} у ${r.price.provider} (самый дешёвый): $${r.price.prompt.toFixed(4)} / 1 млн вход, $${r.price.completion.toFixed(4)} / 1 млн выход`);
+  if (r.estimate) lines.push(`Фактически выходит $${r.estimate.blendedPerM.toFixed(4)} за 1 млн токенов`);
   return lines.join('\n');
 }
 

@@ -36,11 +36,15 @@ async function openrouter() {
   });
 }
 
+// Цены провайдеров модели: берём самого дешёвого рабочего (к нему и идут запросы — provider.sort=price)
 async function pricing() {
   return cached('price', 6 * 3600_000, async () => {
-    const list = await orGet('/models');
-    const m = list.find((x) => x.id === config.model);
-    return m ? { prompt: Number(m.pricing.prompt) * 1e6, completion: Number(m.pricing.completion) * 1e6 } : null;
+    const { endpoints } = await orGet(`/models/${config.model}/endpoints`);
+    const ok = endpoints
+      .filter((e) => e.status === 0 && (e.supported_parameters || []).includes('tools'))
+      .map((e) => ({ provider: e.provider_name, prompt: Number(e.pricing.prompt) * 1e6, completion: Number(e.pricing.completion) * 1e6 }))
+      .sort((a, b) => a.prompt + a.completion - (b.prompt + b.completion));
+    return ok.length ? { ...ok[0], official: ok.find((e) => e.provider === 'Z.AI') || null } : null;
   });
 }
 
@@ -65,7 +69,13 @@ export async function usageReport() {
   ]);
   // Смешанная цена за 1 млн токенов — по реальному соотношению вход/выход у Мирика (агенты в основном читают)
   const share = s.prompt + s.completion > 0 ? s.prompt / (s.prompt + s.completion) : 0.9;
-  const blended = price ? price.prompt * share + price.completion * (1 - share) : null;
+  // Реальная цена за 1 млн токенов по фактическим счетам; пока данных мало — по прайсу самого дешёвого провайдера
+  const listBlended = price ? price.prompt * share + price.completion * (1 - share) : null;
+  const realPerM = s.tokens > 20000 && s.cost > 0 ? (s.cost / s.tokens) * 1e6 : null;
+  const recentDays = Object.keys(s.daily || {}).sort().slice(-7).map((d) => s.daily[d]);
+  const recent = recentDays.reduce((a, d) => ({ tokens: a.tokens + (d.tokens || 0), cost: a.cost + (d.cost || 0) }), { tokens: 0, cost: 0 });
+  const recentPerM = recent.tokens > 20000 && recent.cost > 0 ? (recent.cost / recent.tokens) * 1e6 : null;
+  const blended = recentPerM ?? realPerM ?? listBlended;
   const left = or.error ? null : Math.max(0, Math.min(or.balance, or.keyRemaining ?? Infinity));
   const tasks = s.tasksDone || 0;
   return {
@@ -75,6 +85,7 @@ export async function usageReport() {
     estimate: left == null || !blended ? null : {
       spendable: left,
       blendedPerM: blended,
+      basis: recentPerM ? 'real7d' : realPerM ? 'real' : 'list',
       tokensLeft: (left / blended) * 1e6,
       avgTaskCost: tasks ? s.cost / tasks : null,
       tasksLeft: tasks && s.cost > 0 ? left / (s.cost / tasks) : null,
