@@ -10,7 +10,7 @@ import { store, save } from './store.js';
 import { bus, recentLogs } from './bus.js';
 import { AGENT_LIST } from './agents/registry.js';
 import { agentState, createTask, runTask, cancelTask, talkToMirik } from './agents/runtime.js';
-import { bot, ownerChats } from './bot.js';
+import { bot, ownerChats, homeChat } from './bot.js';
 import { usageReport, watchBalance } from './billing.js';
 
 const SESSION = crypto.createHash('sha256').update('mirik:' + config.adminPassword + ':' + config.botToken).digest('hex');
@@ -43,8 +43,8 @@ function snapshot() {
 }
 
 // Задачи из офиса: файлы/скриншоты/уведомления уходят владельцу в Telegram
-function ownerIO() {
-  const chatId = ownerChats()[0];
+function ownerIO(target) {
+  const chatId = target || homeChat();
   if (!bot || !chatId) return {};
   return {
     notify: (text) => bot.api.sendMessage(chatId, '📣 ' + text).catch(() => {}),
@@ -83,7 +83,7 @@ export function startServer() {
     for (const k of names) store.secrets[k] = secrets[k];
     save();
     const from = String(req.body?.from || 'Саня').slice(0, 40);
-    ownerIO().notify?.(`🔐 ${from} передал доступ: ${names.join(', ')}. Боря сможет заходить на сайт сам.`);
+    ownerIO(ownerChats()[0]).notify?.(`🔐 ${from} передал доступ: ${names.join(', ')}. Боря сможет заходить на сайт сам.`);
     res.json({ ok: true, saved: names });
   });
 
@@ -93,7 +93,9 @@ export function startServer() {
     const text = String(req.body?.text || '').trim();
     const from = String(req.body?.from || 'Саня').slice(0, 40);
     if (!text) return res.status(400).json({ error: 'Пустое задание' });
-    const io = ownerIO();
+    // Саня говорит, из какого чата пришла просьба: туда и отвечаем (в группу — значит в группу)
+    const target = Number.isInteger(req.body?.chat_id) ? req.body.chat_id : undefined;
+    const io = ownerIO(target);
     const job = talkToMirik('sanya', { text: `[${from}]: ${text}`, source: 'sanya' }, { ...io, fromSanya: true });
     // держим запрос до 50 с; дольше — Мирик доделает и отчитается владельцу в Telegram сам
     const late = Symbol('late');

@@ -19,7 +19,7 @@ function exec(cmd, args, input, timeoutMs = 60000) {
     child.stderr.on('data', add);
     const timer = setTimeout(() => { child.kill('SIGKILL'); out += '\n[таймаут]'; }, timeoutMs);
     child.on('error', (e) => { out += String(e); });
-    child.on('close', (code) => { clearTimeout(timer); resolve(`exit=${code}\n${out.slice(0, 12000)}`); });
+    child.on('close', (code) => { clearTimeout(timer); resolve(`exit=${code}\n${out.length > 6000 ? out.slice(0, 2500) + '\n…[середина вывода пропущена]…\n' + out.slice(-3000) : out}`); });
     if (input) child.stdin.end(input);
     else child.stdin.end();
   });

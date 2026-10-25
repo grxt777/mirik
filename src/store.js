@@ -43,7 +43,7 @@ export function chatHistory(chatId) {
   return (db.chats[chatId] ||= []);
 }
 
-export function pushHistory(chatId, msg, limit = 30) {
+export function pushHistory(chatId, msg, limit = 60) {
   const h = chatHistory(chatId);
   h.push(msg);
   if (h.length > limit) h.splice(0, h.length - limit);

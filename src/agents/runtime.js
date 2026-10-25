@@ -8,6 +8,20 @@ import { webTools } from '../tools/web.js';
 import { fileTools } from '../tools/files.js';
 import { browserTools, closeTaskPage } from '../tools/browser.js';
 import { docTools } from '../tools/docs.js';
+import { scrub, scrubAll, addJournal, recallFor, officeState, compressHistory } from '../memory.js';
+
+// Расход: лимит токенов на одну задачу (вся команда вместе) — примерно $0.02 по цене самого дешёвого провайдера
+const TASK_TOKEN_BUDGET = 400_000;
+// Сколько последних результатов инструментов держать целиком; более старые сжимаются
+const KEEP_FULL_RESULTS = 2;
+
+// Задачи, прерванные перезапуском сервера, не должны висеть «в работе»
+for (const t of store.tasks) if (t.status === 'running' || t.status === 'queued') {
+  t.status = 'interrupted';
+  t.result = t.result || 'Прервано перезапуском сервера';
+  t.finishedAt = t.finishedAt || Date.now();
+}
+scrubAll();
 
 // ---------- состояние агентов (для офиса) ----------
 export const agentState = Object.fromEntries(
@@ -25,7 +39,7 @@ const running = new Map(); // taskId -> { cancelled }
 export function createTask({ text, agent = 'mirik', source = 'panel', chatId = null }) {
   const task = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    text: String(text).slice(0, 2000),
+    text: scrub(text).slice(0, 2000),
     agent,
     status: 'queued',
     source,
@@ -42,7 +56,7 @@ export function createTask({ text, agent = 'mirik', source = 'panel', chatId = n
 }
 
 function taskStep(task, agent, text) {
-  task.steps.push({ t: Date.now(), agent, text: String(text).slice(0, 300) });
+  task.steps.push({ t: Date.now(), agent, text: scrub(text).slice(0, 300) });
   if (task.steps.length > 120) task.steps.shift();
   bus.emit('event', { type: 'task', task });
 }
@@ -108,7 +122,7 @@ const builtinTools = [
       const res = await fetch(`${config.sanyaUrl}/link/ask`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${config.linkToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, from: AGENTS[ctx.agentId]?.name || 'Мирик' }),
+        body: JSON.stringify({ text, from: AGENTS[ctx.agentId]?.name || 'Мирик', chat_id: typeof ctx.task?.chatId === 'number' ? ctx.task.chatId : store.homeChat }),
         signal: AbortSignal.timeout(90_000),
       });
       const data = await res.json().catch(() => ({}));
@@ -154,23 +168,49 @@ function activityLabel(name, args) {
   }
 }
 
+// Старые результаты инструментов (снимки страниц, вывод терминала) больше не нужны модели целиком —
+// без этого каждый следующий шаг заново отправляет всё, и расход растёт квадратично.
+function compact(messages) {
+  const toolIdx = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
+  for (const i of toolIdx.slice(0, -KEEP_FULL_RESULTS)) {
+    const m = messages[i];
+    if (m.content.length > 1500) m.content = m.content.slice(0, 1000) + `\n…[сокращено: старый результат, было ${m.content.length} симв.]`;
+  }
+}
+
+function mirikContext(ctx, input) {
+  const query = typeof input === 'string' ? input : input.find?.((p) => p.type === 'text')?.text || '';
+  const parts = [];
+  if (store.memory.length) parts.push('Что ты знаешь о владельце:\n' + store.memory.slice(-25).map((m) => '- ' + m.text).join('\n'));
+  const summary = store.chatSummaries?.[ctx.task?.chatId];
+  if (summary) parts.push('Сводка более ранней переписки в этом чате:\n' + summary);
+  const recalled = recallFor(query, new Set([ctx.taskId]));
+  if (recalled) parts.push('Из памяти (похожие прошлые задачи и факты):\n' + recalled);
+  parts.push('СОСТОЯНИЕ ОФИСА (правда на текущий момент — опирайся на это, не выдумывай):\n' + officeState(agentState, AGENTS, ctx.taskId));
+  return '\n\n' + parts.join('\n\n');
+}
+
 // ---------- цикл агента ----------
 export async function runAgent({ agentId, input, history = [], ctx }) {
   const agent = AGENTS[agentId];
   const tools = agent.tools.map((n) => TOOLS[n]).filter(Boolean);
-  const maxSteps = agentId === 'mirik' ? 20 : 30;
-  const memory = agentId === 'mirik' && store.memory.length
-    ? '\n\nЧто ты помнишь о владельце:\n' + store.memory.slice(-30).map((m) => '- ' + m.text).join('\n')
-    : '';
-  const system = `${agent.prompt}${memory}\n\nСейчас: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}. Рабочая папка общая для всей команды.`;
+  const maxSteps = agentId === 'mirik' ? 15 : 20;
+  const extra = agentId === 'mirik' ? mirikContext(ctx, input) : '';
+  const system = `${agent.prompt}${extra}\n\nСейчас: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}. Рабочая папка общая для всей команды. Экономь токены: не перечитывай одно и то же, не повторяй шаги.`;
   const messages = [{ role: 'system', content: system }, ...history, { role: 'user', content: input }];
+  const budget = (ctx.control ||= {});
+  budget.tokens ||= 0;
   const actx = { ...ctx, agentId };
 
   setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
   try {
     for (let step = 0; step < maxSteps; step++) {
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
-      const msg = await chat({ messages, tools: tools.map(toolSchema), agent: agentId });
+      compact(messages);
+      const over = budget.tokens > TASK_TOKEN_BUDGET;
+      if (over) messages.push({ role: 'user', content: 'Лимит токенов на задачу исчерпан. Больше никаких инструментов — сразу дай итоговый отчёт по тому, что уже сделано.' });
+      const msg = await chat({ messages, tools: over ? [] : tools.map(toolSchema), agent: agentId });
+      budget.tokens += msg._usage?.total_tokens || 0;
       const calls = msg.tool_calls || [];
       if (!calls.length) {
         const text = (msg.content || '').trim() || 'Готово.';
@@ -196,7 +236,7 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
             content = 'Ошибка: ' + e.message;
             log(agentId, content, 'error');
           }
-          return { role: 'tool', tool_call_id: call.id, content: content.slice(0, 20000) };
+          return { role: 'tool', tool_call_id: call.id, content: scrub(content).slice(0, 12000) };
         })
       );
       messages.push(...results);
@@ -224,8 +264,9 @@ export async function runTask(task, io = {}, { input, history = [] } = {}) {
       ctx: { task, taskId: task.id, depth: 0, control, ...io },
     });
     task.status = 'done';
-    task.result = result;
+    task.result = scrub(result);
     store.stats.tasksDone++;
+    addJournal(task);
     return result;
   } catch (e) {
     task.status = control.cancelled ? 'cancelled' : 'failed';
@@ -247,7 +288,17 @@ export async function talkToMirik(chatId, { text, content, source = 'telegram', 
   onTask?.(task);
   const history = chatHistory(chatId).slice(-20);
   const result = await runTask(task, io, { input: content ?? text, history });
-  pushHistory(chatId, { role: 'user', content: text });
-  pushHistory(chatId, { role: 'assistant', content: result });
+  pushHistory(chatId, { role: 'user', content: scrub(text) });
+  pushHistory(chatId, { role: 'assistant', content: scrub(result) });
+  // старая переписка не выбрасывается, а сжимается в сводку
+  compressHistory(chatId, async (prev, chunk) => (await chat({
+    maxTokens: 700,
+    temperature: 0.2,
+    agent: 'mirik',
+    messages: [
+      { role: 'system', content: 'Сожми переписку владельца с ИИ-агентом Мириком в краткую сводку (до 1500 символов): договорённости, решения, текущие дела, важные факты о владельце, что сделано и что осталось. Без воды, по пунктам.' },
+      { role: 'user', content: `Прошлая сводка:\n${prev || '—'}\n\nНовая часть переписки:\n${chunk}` },
+    ],
+  })).content || prev).catch(() => {});
   return { task, result };
 }

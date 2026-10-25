@@ -46,7 +46,7 @@ export async function chat({ messages, tools, temperature = 0.4, maxTokens = 400
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error?.message || `HTTP ${res.status}`);
       if (data.usage) recordUsage(data.usage, agent);
-      return data.choices[0].message;
+      return Object.assign(data.choices[0].message, { _usage: data.usage });
     } catch (e) {
       lastErr = e;
       await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));

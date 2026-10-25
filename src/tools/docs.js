@@ -71,7 +71,7 @@ export const docTools = [
     parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
     async run({ path: p }) {
       const out = await py(['read', wsPath(p)]);
-      return out.length > 40000 ? out.slice(0, 40000) + '\n…[обрезано, документ длинный]' : out || '(пусто)';
+      return out.length > 25000 ? out.slice(0, 25000) + '\n…[обрезано, документ длинный — читай частями через run_code при необходимости]' : out || '(пусто)';
     },
   },
   {

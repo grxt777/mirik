@@ -48,7 +48,7 @@ export const webTools = [
       const type = res.headers.get('content-type') || '';
       const body = await res.text();
       const text = type.includes('html') ? htmlToText(body) : body;
-      return `HTTP ${res.status}\n` + text.slice(0, 15000);
+      return `HTTP ${res.status}\n` + (text.length > 6000 ? text.slice(0, 6000) + '\n…[страница длиннее — обрезано]' : text);
     },
   },
 ];

@@ -68,6 +68,12 @@ function addressed(ctx, owner) {
 
 const refused = new Set(); // чужим в личке отвечаем один раз, без спама
 
+// «Домашний» чат — где босс общался последним (группа или личка). Туда идут поздние ответы и уведомления.
+function setHomeChat(id) {
+  if (store.homeChat !== id) { store.homeChat = id; save(); }
+}
+export const homeChat = () => store.homeChat || ownerChats()[0];
+
 // io-объект для агентов: как им писать в этот чат
 function chatIO(api, chatId) {
   return {
@@ -201,8 +207,10 @@ export function startBot() {
     const owner = isOwner(id);
     if (group) {
       if (!owner || !addressed(ctx, owner)) return; // в группе молчим, пока босс не позовёт
+      setHomeChat(ctx.chat.id);
       return next();
     }
+    if (owner && ctx.message) setHomeChat(ctx.chat.id);
     if (!owner) {
       if (!refused.has(id)) { refused.add(id); await ctx.reply('Я работаю только на своего босса 🙂'); }
       return;

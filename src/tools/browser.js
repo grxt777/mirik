@@ -10,10 +10,17 @@ let browserPromise = null;
 const pages = new Map(); // taskId -> page
 
 async function getBrowser() {
+  // браузер мог упасть (нехватка памяти, краш вкладки) — тогда поднимаем новый, а не ломаемся навсегда
+  if (browserPromise) {
+    const b = await browserPromise.catch(() => null);
+    if (!b || !b.isConnected()) browserPromise = null;
+  }
   if (!browserPromise) {
-    browserPromise = import('playwright').then(({ chromium }) =>
-      chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
-    );
+    browserPromise = import('playwright').then(async ({ chromium }) => {
+      const b = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+      b.on('disconnected', () => { browserPromise = null; for (const id of [...pages.keys()]) pages.delete(id); });
+      return b;
+    });
     browserPromise.catch(() => (browserPromise = null));
   }
   return browserPromise;
@@ -21,7 +28,7 @@ async function getBrowser() {
 
 async function getPage(ctx) {
   let page = pages.get(ctx.taskId);
-  if (page && !page.isClosed()) return page;
+  if (page && !page.isClosed() && page.context().browser()?.isConnected()) return page;
   const browser = await getBrowser();
   const context = await browser.newContext({ acceptDownloads: true, locale: 'ru-RU', userAgent: UA, viewport: { width: 1280, height: 860 } });
   page = await context.newPage();
@@ -52,14 +59,14 @@ async function snapshot(page) {
       const r = el.getBoundingClientRect();
       if (r.width < 2 || r.height < 2 || getComputedStyle(el).visibility === 'hidden') continue;
       el.setAttribute('data-mirik', String(++i));
-      const label = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || el.name || el.title || '').trim().slice(0, 80);
+      const label = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || el.name || el.title || '').trim().slice(0, 60);
       const extra = el.tagName === 'INPUT' ? ` type=${el.type}` : el.tagName === 'A' ? ` href=${el.getAttribute('href') || ''}`.slice(0, 120) : '';
       out.push(`[${i}] ${el.tagName.toLowerCase()}${extra} "${label}"`);
-      if (i >= 150) break;
+      if (i >= 80) break;
     }
     return out;
   });
-  const text = htmlToText(await page.content()).slice(0, 8000);
+  const text = htmlToText(await page.content()).slice(0, 3500);
   return `URL: ${page.url()}\nЗаголовок: ${await page.title()}\n\nТЕКСТ:\n${text}\n\nЭЛЕМЕНТЫ:\n${elements.join('\n')}`;
 }
 
