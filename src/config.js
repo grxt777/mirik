@@ -5,7 +5,6 @@ const env = process.env;
 export const config = {
   openrouterKey: env.OPENROUTER_API_KEY || '',
   model: env.MODEL || 'z-ai/glm-5.3-flash',
-  audioModel: env.AUDIO_MODEL || 'google/gemini-3.5-flash-lite',
   botToken: env.TELEGRAM_BOT_TOKEN || '',
   ownerIds: (env.OWNER_IDS || '').split(',').map((s) => s.trim()).filter(Boolean).map(Number),
   adminPassword: env.ADMIN_PASSWORD || 'mirik',
