@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { config } from './config.js';
 import { store, save, chatHistory } from './store.js';
-import { bus } from './bus.js';
+import { bus, log } from './bus.js';
 import { AGENTS, AGENT_LIST } from './agents/registry.js';
 import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
 import { wsPath } from './tools/files.js';
@@ -151,7 +151,7 @@ export function startBot() {
 
   bot.command('start', (ctx) =>
     ctx.reply(
-      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото и файлы.\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика`,
+      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня в офисе работает команда: программист, исследователь, оператор браузера и отличница.\n\nПросто напиши задание — я раздам его своим и пришлю результат.\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика`,
       { reply_markup: officeKeyboard() }
     )
   );
@@ -257,7 +257,33 @@ export function startBot() {
     handleTask(ctx, { text: `Пользователь прислал файл ${rel}. ${ctx.message.caption || 'Посмотри, что в нём, и скажи, что с ним сделать.'}` });
   });
 
-  bot.on(['message:voice', 'message:audio', 'message:video_note'], (ctx) => ctx.reply('🎙 Голосовые пока не понимаю — напиши текстом.'));
+  // Голосовые, аудио и кружочки: GLM звук не слышит — расшифровывает Саня по прямому каналу
+  bot.on(['message:voice', 'message:audio', 'message:video_note'], async (ctx) => {
+    const m = ctx.message;
+    const media = m.voice || m.audio || m.video_note;
+    if (!config.sanyaUrl || !config.linkToken) return ctx.reply('🎙 Голосовые расшифровывает Саня, но связь с ним не настроена — напиши текстом.');
+    if (media.file_size > 20 * 1024 * 1024) return ctx.reply('Слишком большой файл (лимит Telegram — 20 МБ)');
+    const note = await ctx.reply('🎙 Передал Сане, он расшифровывает…', { reply_parameters: { message_id: m.message_id } });
+    try {
+      const file = await ctx.api.getFile(media.file_id);
+      const audio = Buffer.from(await (await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`)).arrayBuffer());
+      const res = await fetch(`${config.sanyaUrl}/link/transcribe`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.linkToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio: audio.toString('base64'), mime: media.mime_type || (m.video_note ? 'video/mp4' : 'audio/ogg'), from: 'Мирик' }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      const text = (data.text || '').trim();
+      if (!text) return ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Саня не расслышал — попробуй ещё раз');
+      await ctx.api.editMessageText(ctx.chat.id, note.message_id, `🎙 Саня расшифровал: «${text.slice(0, 3800)}»`);
+      log('mirik', '🎙 Саня расшифровал голосовое', 'delegate');
+      handleTask(ctx, { text: (m.caption ? m.caption + '\n' : '') + text });
+    } catch (e) {
+      await ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Саня не смог расшифровать: ' + e.message).catch(() => {});
+    }
+  });
 
   bot.on('message:text', (ctx) => {
     handleTask(ctx, { text: ctx.message.text });
