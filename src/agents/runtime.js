@@ -3,7 +3,8 @@ import { chat } from '../llm.js';
 import { config } from '../config.js';
 import { AGENTS, AGENT_LIST } from './registry.js';
 import { bus, log } from '../bus.js';
-import { store, save, addMemory, chatHistory, pushHistory } from '../store.js';
+import { store, save } from '../store.js';
+import * as memdb from '../memdb.js';
 import { webTools } from '../tools/web.js';
 import { fileTools } from '../tools/files.js';
 import { browserTools, closeTaskPage } from '../tools/browser.js';
@@ -92,21 +93,28 @@ const builtinTools = [
   },
   {
     name: 'remember',
-    description: 'Запомнить важный факт о владельце или делах надолго.',
+    description: 'Запомнить важный долгий факт о владельце или делах (предпочтения, люди, учёба, договорённости). Один факт — одна короткая фраза.',
     parameters: { type: 'object', properties: { fact: { type: 'string' } }, required: ['fact'] },
     async run({ fact }) {
-      addMemory(fact);
-      return 'Запомнил';
+      const id = memdb.addFact(scrub(fact), 'manual');
+      return id ? `Запомнил (факт #${id})` : 'Такой факт уже есть';
     },
   },
   {
     name: 'recall',
-    description: 'Поиск по долгосрочной памяти.',
-    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    description: 'Поиск по всей долгой памяти: факты о владельце, прошлые задачи с результатами, вся прошлая переписка. Ищет по словам — если не нашлось, переформулируй (синонимы, другие слова, английский/узбекский вариант) и поищи ещё раз.',
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Ключевые слова, не целая фраза' } }, required: ['query'] },
     async run({ query }) {
-      const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-      const hits = store.memory.filter((m) => words.some((w) => m.text.toLowerCase().includes(w)));
-      return (hits.length ? hits : store.memory.slice(-15)).map((m) => '- ' + m.text).join('\n') || 'Память пуста';
+      const hits = memdb.search(query, { k: 10 });
+      return hits.length ? hits.map((l) => '- ' + l).join('\n') : 'Ничего не нашлось — попробуй другие слова.';
+    },
+  },
+  {
+    name: 'forget',
+    description: 'Удалить устаревший или неверный факт из памяти по его номеру (#id).',
+    parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] },
+    async run({ id }) {
+      return memdb.deleteFact(id) ? 'Удалил' : 'Нет такого факта';
     },
   },
   {
@@ -181,10 +189,11 @@ function compact(messages) {
 function mirikContext(ctx, input) {
   const query = typeof input === 'string' ? input : input.find?.((p) => p.type === 'text')?.text || '';
   const parts = [];
-  if (store.memory.length) parts.push('Что ты знаешь о владельце:\n' + store.memory.slice(-25).map((m) => '- ' + m.text).join('\n'));
-  const summary = store.chatSummaries?.[ctx.task?.chatId];
+  const facts = memdb.listFacts(40);
+  if (facts.length) parts.push('Что ты знаешь о владельце (факты, #id для forget):\n' + facts.map((f) => `- #${f.id} ${f.text}`).join('\n'));
+  const summary = ctx.task?.chatId != null && memdb.summary(ctx.task.chatId);
   if (summary) parts.push('Сводка более ранней переписки в этом чате:\n' + summary);
-  const recalled = recallFor(query, new Set([ctx.taskId]));
+  const recalled = recallFor(query, { skipMsgIds: ctx.historyIds, skipTaskIds: new Set([ctx.taskId]) });
   if (recalled) parts.push('Из памяти (похожие прошлые задачи и факты):\n' + recalled);
   parts.push('СОСТОЯНИЕ ОФИСА (правда на текущий момент — опирайся на это, не выдумывай):\n' + officeState(agentState, AGENTS, ctx.taskId));
   return '\n\n' + parts.join('\n\n');
@@ -286,17 +295,18 @@ export async function runTask(task, io = {}, { input, history = [] } = {}) {
 export async function talkToMirik(chatId, { text, content, source = 'telegram', onTask }, io) {
   const task = createTask({ text, agent: 'mirik', source, chatId });
   onTask?.(task);
-  const history = chatHistory(chatId).slice(-20);
-  const result = await runTask(task, io, { input: content ?? text, history });
-  pushHistory(chatId, { role: 'user', content: scrub(text) });
-  pushHistory(chatId, { role: 'assistant', content: scrub(result) });
+  const window = memdb.history(chatId, 20);
+  const history = window.map(({ role, content }) => ({ role, content }));
+  const result = await runTask(task, { ...io, historyIds: new Set(window.map((m) => m.id)) }, { input: content ?? text, history });
+  memdb.addMessage(chatId, 'user', scrub(text));
+  memdb.addMessage(chatId, 'assistant', scrub(result));
   // старая переписка не выбрасывается, а сжимается в сводку
   compressHistory(chatId, async (prev, chunk) => (await chat({
-    maxTokens: 700,
+    maxTokens: 900,
     temperature: 0.2,
     agent: 'mirik',
     messages: [
-      { role: 'system', content: 'Сожми переписку владельца с ИИ-агентом Мириком в краткую сводку (до 1500 символов): договорённости, решения, текущие дела, важные факты о владельце, что сделано и что осталось. Без воды, по пунктам.' },
+      { role: 'system', content: 'Сожми переписку владельца с ИИ-агентом Мириком. Формат ответа строго:\nСВОДКА:\n<до 1500 символов по пунктам: договорённости, решения, текущие дела, что сделано и что осталось>\nФАКТЫ:\n- <долгие факты о владельце: учёба, работа, предпочтения, люди, цели — по одному в строке; если новых нет, напиши «- нет»>' },
       { role: 'user', content: `Прошлая сводка:\n${prev || '—'}\n\nНовая часть переписки:\n${chunk}` },
     ],
   })).content || prev).catch(() => {});

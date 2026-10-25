@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { config } from './config.js';
-import { store, save, chatHistory } from './store.js';
+import { store, save } from './store.js';
+import * as memdb from './memdb.js';
 import { bus, log } from './bus.js';
 import { AGENTS, AGENT_LIST } from './agents/registry.js';
 import { agentState, talkToMirik, createTask, runTask, cancelTask } from './agents/runtime.js';
@@ -184,7 +185,7 @@ async function balanceText() {
 
 function statsText() {
   const s = store.stats;
-  return `📊 Статистика\n\nЗаданий выполнено: ${s.tasksDone}\nТокенов: ${s.tokens.toLocaleString('ru-RU')}\nПотрачено: $${s.cost.toFixed(4)}\nМодель: ${config.model}\nФактов в памяти: ${store.memory.length}`;
+  return `📊 Статистика\n\nЗаданий выполнено: ${s.tasksDone}\nТокенов: ${s.tokens.toLocaleString('ru-RU')}\nПотрачено: $${s.cost.toFixed(4)}\nМодель: ${config.model}\nФактов в памяти: ${memdb.factCount()}`;
 }
 
 export function startBot() {
@@ -246,18 +247,16 @@ export function startBot() {
   });
 
   bot.command('reset', (ctx) => {
-    chatHistory(ctx.chat.id).length = 0;
-    save();
-    return ctx.reply('🧹 Диалог забыт (долгосрочная память осталась, см. /memory)');
+    memdb.resetChat(ctx.chat.id);
+    return ctx.reply('🧹 Диалог начат заново (долгая память и архив переписки остались, см. /memory)');
   });
 
   bot.command('memory', (ctx) => {
-    const m = store.memory.slice(-30).map((x) => '• ' + x.text).join('\n');
+    const m = memdb.listFacts(40).map((x) => `• #${x.id} ${x.text}`).join('\n');
     return ctx.reply(m ? '🧠 Что я помню:\n\n' + m + '\n\n/forgetall — стереть всё' : 'Память пуста');
   });
   bot.command('forgetall', (ctx) => {
-    store.memory.length = 0;
-    save();
+    memdb.clearFacts();
     return ctx.reply('🧠 Память очищена');
   });
 

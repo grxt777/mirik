@@ -8,8 +8,6 @@ fs.mkdirSync(config.workspaceDir, { recursive: true });
 
 const defaults = {
   tasks: [],      // { id, text, agent, status, source, chatId, createdAt, finishedAt, result, steps[] }
-  memory: [],     // долгосрочные факты { id, text, createdAt }
-  chats: {},      // chatId -> история диалога с Мириком
   owners: [],     // telegram user id
   stats: { tokens: 0, cost: 0, tasksDone: 0 },
 };
@@ -20,31 +18,18 @@ try {
 } catch {}
 
 let timer = null;
+function flush() {
+  clearTimeout(timer);
+  timer = null;
+  fs.writeFileSync(file + '.tmp', JSON.stringify(db, null, 1), { mode: 0o600 });
+  fs.renameSync(file + '.tmp', file);
+}
 export function save() {
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    fs.writeFileSync(file + '.tmp', JSON.stringify(db, null, 1), { mode: 0o600 });
-    fs.renameSync(file + '.tmp', file);
-  }, 300);
+  timer = setTimeout(flush, 300);
 }
+// при остановке/деплое дописываем последние изменения (память — в SQLite, она и так надёжна)
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { try { if (timer) flush(); } finally { process.exit(0); } });
 
 export const store = db;
 
-export function addMemory(text) {
-  const item = { id: Date.now().toString(36), text, createdAt: Date.now() };
-  db.memory.push(item);
-  if (db.memory.length > 300) db.memory.shift();
-  save();
-  return item;
-}
-
-export function chatHistory(chatId) {
-  return (db.chats[chatId] ||= []);
-}
-
-export function pushHistory(chatId, msg, limit = 60) {
-  const h = chatHistory(chatId);
-  h.push(msg);
-  if (h.length > limit) h.splice(0, h.length - limit);
-  save();
-}

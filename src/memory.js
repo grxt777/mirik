@@ -5,6 +5,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { store, save } from './store.js';
 import { secretValues, secretNames } from './secrets.js';
+import * as memdb from './memdb.js';
 
 // ---------- секреты не должны оседать в истории ----------
 export function scrub(text) {
@@ -19,62 +20,18 @@ export function scrubAll() {
     t.result = t.result && scrub(t.result);
     for (const s of t.steps) s.text = scrub(s.text);
   }
-  for (const h of Object.values(store.chats)) for (const m of h) if (typeof m.content === 'string') m.content = scrub(m.content);
-  for (const j of store.journal || []) { j.text = scrub(j.text); j.result = scrub(j.result); }
+  memdb.scrubValues(secretValues());
   save();
 }
 
-// ---------- поиск BM25 ----------
-const STOP = new Set('и в во не что он на я с со как а то все она так его но да ты к у же вы за бы по только ее мне было вот от меня еще нет о из ему теперь когда даже ну вдруг ли если уже или ни быть был него до вас нибудь опять уж вам ведь там потом себя ничего ей может они тут где есть надо ней для мы тебя их чем была сам чтоб без будто чего раз тоже себе под будет ж тогда кто этот того потому этого какой совсем ним здесь этом один почти мой тем чтобы нее сейчас были куда зачем всех никогда можно при наконец два об другой хоть после над больше тот через эти нас про всего них какая много разве три эту моя впрочем хорошо свою этой перед иногда лучше чуть том нельзя такой им более всегда конечно всю между the a an of to in is and or for on with че там мирик'.split(' '));
-const stem = (w) => (w.length > 6 ? w.slice(0, 6) : w);
-export const tokenize = (s) => String(s).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1 && !STOP.has(w)).map(stem);
-
-function bm25(docs, query, k = 6) {
-  const q = [...new Set(tokenize(query))];
-  if (!q.length || !docs.length) return [];
-  const toks = docs.map((d) => tokenize(d.text));
-  const avg = toks.reduce((n, t) => n + t.length, 0) / toks.length || 1;
-  const df = Object.fromEntries(q.map((w) => [w, toks.filter((t) => t.includes(w)).length]));
-  return docs
-    .map((d, i) => {
-      const t = toks[i];
-      let score = 0;
-      for (const w of q) {
-        const f = t.filter((x) => x === w).length;
-        if (!f) continue;
-        const idf = Math.log(1 + (docs.length - df[w] + 0.5) / (df[w] + 0.5));
-        score += (idf * f * 2.2) / (f + 1.2 * (0.25 + 0.75 * (t.length / avg)));
-      }
-      return { d, score: score * (d.boost || 1) };
-    })
-    .filter((x) => x.score > 0.5)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k)
-    .map((x) => x.d);
-}
-
-// ---------- журнал задач ----------
+// ---------- журнал задач и поиск: SQLite + FTS5 (memdb.js) ----------
 export function addJournal(task) {
   if (task.agent !== 'mirik' && task.source !== 'telegram') return;
-  (store.journal ||= []).push({
-    id: task.id,
-    t: task.createdAt,
-    chatId: task.chatId,
-    text: scrub(task.text).slice(0, 400),
-    result: scrub(task.result || '').slice(0, 900),
-  });
-  if (store.journal.length > 600) store.journal.splice(0, store.journal.length - 600);
-  save();
+  memdb.addJournal({ ...task, text: scrub(task.text), result: scrub(task.result || '') });
 }
 
-const when = (t) => new Date(t).toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-
-export function recallFor(query, exclude = new Set()) {
-  const docs = [
-    ...store.memory.map((m) => ({ text: m.text, label: `факт: ${m.text}`, boost: 1.3 })),
-    ...(store.journal || []).filter((j) => !exclude.has(j.id)).map((j) => ({ text: `${j.text} ${j.result}`, label: `[${when(j.t)}] задача «${j.text.slice(0, 160)}» → ${j.result.slice(0, 400)}` })),
-  ];
-  return bm25(docs, query, 6).map((d) => '- ' + d.label.replace(/\n+/g, ' ')).join('\n');
+export function recallFor(query, { skipMsgIds, skipTaskIds } = {}) {
+  return memdb.search(query, { k: 6, skipMsgIds, skipTaskIds }).map((l) => '- ' + l).join('\n');
 }
 
 // ---------- состояние офиса: что реально происходит прямо сейчас ----------
@@ -119,17 +76,18 @@ export function officeState(agentState, AGENTS, currentTaskId) {
   return lines.join('\n');
 }
 
-// ---------- сводка старой переписки ----------
+// ---------- сводка старой переписки + автоматические факты ----------
 export async function compressHistory(chatId, summarize) {
-  const h = store.chats[chatId];
-  if (!h || h.length <= 40) return;
-  const old = h.splice(0, h.length - 20);
-  const prev = (store.chatSummaries ||= {})[chatId] || '';
-  const text = old.map((m) => `${m.role === 'user' ? 'Владелец' : 'Мирик'}: ${String(m.content).slice(0, 500)}`).join('\n');
-  try {
-    store.chatSummaries[chatId] = (await summarize(prev, text)).slice(0, 2000);
-  } catch {
-    store.chatSummaries[chatId] = (prev + '\n' + text).slice(-2000);
+  const rows = memdb.pendingForSummary(chatId);
+  if (!rows.length) return;
+  const prev = memdb.summary(chatId);
+  const text = rows.map((m) => `${m.role === 'user' ? 'Владелец' : 'Мирик'}: ${String(m.content).slice(0, 600)}`).join('\n');
+  let out = '';
+  try { out = await summarize(prev, text); } catch { return; }
+  const [sumPart, factPart = ''] = out.split(/\n?ФАКТЫ:\s*\n?/i);
+  memdb.setSummary(chatId, sumPart.replace(/^СВОДКА:\s*/i, '').trim().slice(0, 2500), rows.at(-1).id);
+  for (const line of factPart.split('\n')) {
+    const f = line.replace(/^[\s\-•*\d.)]+/, '').trim();
+    if (f.length > 8 && f.length < 300 && !/^нет\b/i.test(f)) memdb.addFact(f, 'auto');
   }
-  save();
 }
