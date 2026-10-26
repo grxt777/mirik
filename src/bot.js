@@ -12,6 +12,7 @@ import { agentState, talkToMirik, createTask, runTask, cancelTask, pauseTask, re
 import { wsPath } from './tools/files.js';
 import { usageReport } from './billing.js';
 import { setSecret, deleteSecret, secretNames } from './secrets.js';
+import { overview as vcOverview, lookup as vcLookup, formatLookup as vcFormat } from './vcbase.js';
 
 export let bot = null;
 
@@ -276,6 +277,15 @@ export function startBot() {
   bot.command('team', (ctx) => ctx.reply(teamText()));
   bot.command('tasks', replyTasks);
   bot.command('stats', (ctx) => ctx.reply(statsText()));
+  // энциклопедия StartupBase: /vc — по отраслям, /vc запрос — поиск
+  bot.command('vc', (ctx) => {
+    const query = ctx.match.trim();
+    if (query) return ctx.reply(vcFormat(vcLookup(query, { k: 10 })) || 'В базе по этому запросу ничего нет.');
+    const o = vcOverview();
+    const rows = o.sectors.filter((s) => s.ideas || s.facts).map((s) => `${s.emoji} ${s.name}: идей ${s.ideas}${s.avg ? ` (ср. ${s.avg.toFixed(1)}/10)` : ''}, фактов ${s.facts}`);
+    const last = o.ideas.slice(0, 5).map((i) => `• ${i.title} — ${i.avg_score?.toFixed(1) ?? '?'}/10`);
+    return ctx.reply(`📚 Энциклопедия StartupBase: ${o.totals.ideas} идей, ${o.totals.facts} фактов\n\n${rows.join('\n') || 'Пока пусто — оцените первую идею.'}${last.length ? '\n\nПоследние:\n' + last.join('\n') : ''}\n\nПоиск: /vc запрос`);
+  });
   bot.command('balance', async (ctx) => ctx.reply(await balanceText().catch((e) => '❌ ' + e.message)));
   bot.callbackQuery('balance', async (ctx) => { await ctx.answerCallbackQuery(); await ctx.reply(await balanceText().catch((e) => '❌ ' + e.message)); });
   bot.callbackQuery('team', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(teamText())));
@@ -430,6 +440,7 @@ export function startBot() {
     { command: 'reset', description: 'Забыть диалог' },
     { command: 'stats', description: 'Статистика' },
     { command: 'balance', description: 'Баланс OpenRouter и расход' },
+    { command: 'vc', description: 'Энциклопедия StartupBase' },
   ]).catch(() => {});
   if (config.publicUrl.startsWith('https://')) {
     bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Офис', web_app: { url: config.publicUrl + '/' } } }).catch(() => {});

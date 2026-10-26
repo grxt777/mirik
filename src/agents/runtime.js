@@ -10,10 +10,13 @@ import { fileTools } from '../tools/files.js';
 import { browserTools, closeTaskPage } from '../tools/browser.js';
 import { docTools } from '../tools/docs.js';
 import { videoTools } from '../tools/video.js';
+import { vcTools } from '../tools/vc.js';
+import { lookup as vcLookup, formatLookup as vcFormat, autoRecord as vcAutoRecord } from '../vcbase.js';
+import { wsPath } from '../tools/files.js';
 import { scrub, scrubAll, addJournal, recallFor, officeState, compressHistory } from '../memory.js';
 
 // Расход: лимит токенов на одну задачу (вся команда вместе) — примерно $0.02 по цене самого дешёвого провайдера
-const TASK_TOKEN_BUDGET = 400_000;
+const TASK_TOKEN_BUDGET = 500_000;
 // Сколько последних результатов инструментов держать целиком; более старые сжимаются
 const KEEP_FULL_RESULTS = 2;
 
@@ -185,7 +188,7 @@ const builtinTools = [
   },
 ];
 
-const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...docTools, ...videoTools].map((t) => [t.name, t]));
+const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...docTools, ...videoTools, ...vcTools].map((t) => [t.name, t]));
 
 const toolSchema = (t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } });
 
@@ -205,6 +208,9 @@ function activityLabel(name, args) {
     case 'read_document': return `читает ${short(args.path)}`;
     case 'make_document': return `оформляет ${short(args.path)}`;
     case 'html_to_pdf': return `собирает PDF ${short(args.out)}`;
+    case 'vc_lookup': return `листает базу: «${short(args.query, 30)}»`;
+    case 'vc_save_facts': return `записывает в базу ${args.facts?.length || ''} фактов`;
+    case 'vc_record_idea': return 'заносит идею в энциклопедию';
     case 'build_video': return args.quality === 'draft' ? 'собирает черновик ролика' : 'монтирует ролик';
     case 'render_video': return 'рендерит свой монтаж';
     case 'render_image': return 'делает обложку';
@@ -245,8 +251,13 @@ function mirikContext(ctx, input) {
 export async function runAgent({ agentId, input, history = [], ctx }) {
   const agent = AGENTS[agentId];
   const tools = agent.tools.map((n) => TOOLS[n]).filter(Boolean);
-  const maxSteps = agentId === 'mirik' ? 15 : 20;
-  const extra = agentId === 'mirik' ? mirikContext(ctx, input) : '';
+  const maxSteps = agent.maxSteps || (agentId === 'mirik' ? 15 : 20);
+  let extra = agentId === 'mirik' ? mirikContext(ctx, input) : '';
+  // венчурщики начинают с энциклопедии StartupBase: что уже известно по теме — не ищут заново
+  if (agent.dept === 'vc') {
+    const base = vcFormat(vcLookup(typeof input === 'string' ? input : '', { k: 10 }));
+    extra += '\n\nИЗ ЭНЦИКЛОПЕДИИ STARTUPBASE (уже проверено командой раньше — используй и ссылайся, ищи в интернете только недостающее):\n' + (base || 'по этой теме в базе пока пусто');
+  }
   const system = `${agent.prompt}${extra}\n\nСейчас: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}. Рабочая папка общая для всей команды. Экономь токены: не перечитывай одно и то же, не повторяй шаги.`;
   const messages = [{ role: 'system', content: system }, ...history, { role: 'user', content: input }];
   const budget = (ctx.control ||= {});
@@ -267,15 +278,20 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
       budget.tokens += msg._usage?.total_tokens || 0;
       const calls = msg.tool_calls || [];
       if (!calls.length) {
-        const text = (msg.content || '').trim() || 'Готово.';
-        // описал намерение вместо работы — возвращаем к делу (максимум дважды)
-        if (looksLikeIntent(text) && nudges < 2 && step < maxSteps - 2 && !over) {
+        const text = (msg.content || '').trim();
+        // пустой ответ — не «готово»; описал намерение вместо работы; венчурщик не сохранил мнение — возвращаем к делу
+        const why = !text ? 'Твой ответ пустой. Сделай работу инструментами и дай отчёт с результатом.'
+          : looksLikeIntent(text) ? 'Ты описал, что собираешься сделать, но не сделал. Выполни это прямо сейчас инструментами (без «сейчас соберу/начинаю»), и только потом дай отчёт с результатом.'
+          : agent.dept === 'vc' && !actx.opinionSaved && /projects\/vc\//.test(String(input)) ? 'Ты не сохранил своё мнение в файл projects/vc/<имя>/opinions/' + agentId + '.md (папку назвали в задании). Сохрани его сейчас через write_file — с «Оценка: X/10» и «Вердикт:» — и потом дай отчёт.'
+          : null;
+        if (why && nudges < 2 && step < maxSteps - 1 && !over) {
           nudges++;
-          messages.push({ role: 'assistant', content: text });
-          messages.push({ role: 'user', content: 'Ты описал, что собираешься сделать, но не сделал. Выполни это прямо сейчас инструментами (без «сейчас соберу/начинаю»), и только потом дай отчёт с результатом.' });
-          taskStep(ctx.task, agentId, '↩ возвращаю к делу: ' + text.slice(0, 80));
+          messages.push({ role: 'assistant', content: text || '…' });
+          messages.push({ role: 'user', content: why });
+          taskStep(ctx.task, agentId, '↩ возвращаю к делу' + (text ? ': ' + text.slice(0, 70) : ''));
           continue;
         }
+        if (!text) { taskStep(ctx.task, agentId, '⚠️ пустой ответ'); return 'Сотрудник не дал ответа — результата нет.'; }
         taskStep(ctx.task, agentId, '✅ ' + text);
         return text;
       }
@@ -298,6 +314,9 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
           let content;
           try {
             content = tool ? String(await tool.run(args, actx)) : `Нет инструмента ${call.function.name}`;
+            // мнение совета сохранено → отметка + автозапись идеи в энциклопедию
+            const op = call.function.name === 'write_file' && String(args.path || '').replace(/^\/+/, '').match(/^(projects\/vc\/[^/]+)\/opinions\/[\w-]+\.md$/);
+            if (op && content.startsWith('Записано')) { actx.opinionSaved = true; try { vcAutoRecord(op[1], ctx.task?.text, wsPath); } catch (e) { log(agentId, 'база: ' + e.message, 'error'); } }
           } catch (e) {
             content = 'Ошибка: ' + e.message;
             log(agentId, content, 'error');

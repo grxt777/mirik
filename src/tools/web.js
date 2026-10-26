@@ -81,7 +81,7 @@ export const webTools = [
       if (hits.length) parts.push('Сайты:\n' + hits.map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}\n   ${h.snippet}`).join('\n'));
       if (hits.length < 4) {
         const [news, wiki] = await Promise.all([gnews(query).catch(() => []), wikipedia(query).catch(() => [])]);
-        if (news.length) parts.push('Новости (Google News):\n' + news.map((n, i) => `${i + 1}. ${n.title} — ${n.source}, ${n.date}\n   ${n.url}`).join('\n'));
+        if (news.length) parts.push('Новости (Google News; ссылки — редиректы, открывать не нужно: заголовка, источника и даты достаточно):\n' + news.map((n, i) => `${i + 1}. ${n.title} — ${n.source}, ${n.date}\n   ${n.url}`).join('\n'));
         if (wiki.length) parts.push('Википедия:\n' + wiki.map((w, i) => `${i + 1}. ${w.title}: ${w.snippet}\n   ${w.url}`).join('\n'));
       }
       return parts.length ? parts.join('\n\n') : 'Ничего не найдено. Попробуй другие, более общие слова или английский вариант.';
