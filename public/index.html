@@ -30,6 +30,7 @@
       <div class="meta">
         <button class="pill clickable" id="pRunning" data-tasks="active" title="Что в работе — управление задачами"><i class="pulse"></i><b id="sRunning">0</b><span class="lbl">в работе</span></button>
         <button class="pill clickable hide-sm" id="pDone" data-tasks="done" title="Что готово"><b id="sDone">0</b><span class="lbl">готово</span></button>
+        <a class="pill clickable base-link" href="/base" title="Энциклопедия StartupBase">📚<span class="lbl">База</span></a>
         <button class="pill money" id="pBalance" title="Баланс OpenRouter — открыть бюджет">💰 <b id="sBalance">—</b><span class="lbl">баланс</span></button>
         <i id="connDot" class="conn" title="Нет соединения"></i>
       </div>
@@ -57,14 +58,12 @@
           <button data-tab="team">👥 Команда</button>
           <button data-tab="feed">📡 Лента <span class="badge-dot hidden" id="feedDot"></span></button>
           <button data-tab="budget">💰 Бюджет</button>
-          <button data-tab="base">📚 База</button>
         </nav>
         <div class="views">
           <div class="view" id="v-chat"><div class="chat" id="chat"></div><button class="jump hidden" id="jump">↓ Новые</button></div>
           <div class="view hidden" id="v-team"></div>
           <div class="view hidden" id="v-feed"></div>
           <div class="view hidden" id="v-budget"><div class="empty">Загружаю…</div></div>
-          <div class="view hidden" id="v-base"><div class="empty">Загружаю…</div></div>
         </div>
         <form class="composer" id="composer">
           <div class="to" id="to"></div>

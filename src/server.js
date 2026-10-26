@@ -13,7 +13,9 @@ import { agentState, createTask, runTask, cancelTask, pauseTask, resumeTask, tal
 import { bot, ownerChats, homeChat, sendMedia } from './bot.js';
 import { usageReport, watchBalance } from './billing.js';
 import { setSecret } from './secrets.js';
-import { overview as vcOverview, sectorFacts } from './vcbase.js';
+import { overview as vcOverview, sectorFacts, ideaDetail, allFacts } from './vcbase.js';
+import { wsPath } from './tools/files.js';
+import fsSync from 'node:fs';
 
 const SESSION = crypto.createHash('sha256').update('mirik:' + config.adminPassword + ':' + config.botToken).digest('hex');
 const authed = (token) => typeof token === 'string' && token.length === SESSION.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(SESSION));
@@ -63,6 +65,7 @@ export function startServer() {
   app.use(express.static(path.resolve('public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
   app.get('/health', (_, res) => res.send('ok'));
+  app.get('/base', (_, res) => res.sendFile(path.resolve('public/base.html'), { headers: { 'Cache-Control': 'no-cache' } }));
 
   app.post('/api/login', (req, res) => {
     const { password, initData } = req.body || {};
@@ -138,7 +141,13 @@ export function startServer() {
 
   app.get('/api/usage', async (_, res) => res.json(await usageReport()));
   app.get('/api/vc', (_, res) => res.json(vcOverview()));
+  app.get('/api/vc/facts', (_, res) => res.json(allFacts()));
   app.get('/api/vc/facts/:sector', (req, res) => res.json(sectorFacts(req.params.sector)));
+  app.get('/api/vc/ideas/:id', (req, res) => {
+    const read = (p) => { try { return fsSync.readFileSync(wsPath(p), 'utf8').slice(0, 30000); } catch { return ''; } };
+    const d = ideaDetail(Number(req.params.id), read);
+    d ? res.json(d) : res.status(404).json({ error: 'нет такой идеи' });
+  });
 
   app.post('/api/tasks/:id/cancel', (req, res) => res.json({ ok: cancelTask(req.params.id) }));
   app.post('/api/tasks/:id/pause', (req, res) => res.json({ ok: pauseTask(req.params.id) }));

@@ -222,32 +222,7 @@ button { cursor: pointer; }
 .turn.flash .bubble { animation: flash 1.6s ease-out; }
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--gold); } 100% { box-shadow: 0 0 0 0 transparent; } }
 
-/* энциклопедия StartupBase */
-.base-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 2px 2px 6px; }
-.base-head b { font: 600 15px var(--display); }
-.base-head span { color: var(--muted); font-size: 12px; }
-.sector-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 10px; padding-bottom: 2px; }
-.sector-chips::-webkit-scrollbar { display: none; }
-.sector-chips button { flex: none; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); border-radius: 99px; padding: 5px 11px; font-size: 12.5px; }
-.sector-chips button.on { border-color: var(--gold); color: var(--text); background: rgba(255,210,63,.1); }
-.sector-chips i { font-style: normal; color: var(--gold); margin-left: 2px; }
-.sector-sum { font-size: 13px; }
-.facts { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; }
-.facts li { margin-bottom: 6px; }
-.facts small { color: var(--muted); }
-.facts a { color: var(--blue); }
-.idea { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 11px 12px; margin-bottom: 8px; cursor: pointer; }
-.idea-top { display: flex; gap: 10px; align-items: center; }
-.avg { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font: 700 15px var(--display); background: var(--panel-3); }
-.avg.good, .op.good b { color: var(--green); } .avg.mid, .op.mid b { color: var(--gold); } .avg.bad, .op.bad b { color: var(--red); }
-.idea-title { min-width: 0; } .idea-title b { display: block; font-size: 14px; } .idea-title small { color: var(--muted); font-size: 12px; }
-.ops { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-.op { font-size: 12px; background: var(--panel-3); border-radius: 8px; padding: 3px 8px; color: var(--muted); }
-.op b { margin-left: 2px; }
-.idea-more { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 9px; font-size: 13px; }
-.idea-more p { margin: 0 0 8px; }
-.op-line { margin-bottom: 6px; } .op-line.inv { color: var(--gold); }
-.muted { color: var(--muted); }
+.base-link { text-decoration: none; }
 
 /* бюджет */
 .pill.money { cursor: pointer; font: inherit; color: inherit; }

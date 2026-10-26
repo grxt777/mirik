@@ -72,6 +72,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
     await login({ password: $('#password').value });
+    if (new URLSearchParams(location.search).get('next') === 'base') { location.href = '/base'; return; }
     $('#login').classList.add('hidden');
     connect();
     loadUsage();
@@ -420,8 +421,7 @@ function switchTab(tab) {
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('hidden', v.id !== 'v-' + tab));
   if (tab === 'feed') $('#feedDot').classList.add('hidden');
   if (tab === 'budget') loadUsage();
-  if (tab === 'base') loadBase();
-  $('#composer').classList.toggle('hidden', tab === 'feed' || tab === 'budget' || tab === 'base');
+  $('#composer').classList.toggle('hidden', tab === 'feed' || tab === 'budget');
 }
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
@@ -599,48 +599,6 @@ $('#v-budget').addEventListener('pointerover', (e) => {
 $('#v-budget').addEventListener('pointerleave', () => tip.classList.add('hidden'));
 $('#pBalance').addEventListener('click', () => { switchTab('budget'); $('#app').classList.remove('expanded'); });
 setInterval(loadUsage, 60000);
-
-// ---------- энциклопедия StartupBase ----------
-const base = { data: null, sector: null, open: new Set() };
-const VC_NAMES = { artem: 'Артём', dina: 'Дина', kamila: 'Камила', bakhtiyor: 'Бахтиёр' };
-async function loadBase() {
-  try { base.data = await api('/api/vc'); renderBase(); } catch (e) { if (e.message !== 'auth') $('#v-base').innerHTML = `<div class="empty">Не загрузилось: ${esc(e.message)}</div>`; }
-}
-const scoreCls = (v) => (v == null ? '' : v >= 7 ? 'good' : v >= 5 ? 'mid' : 'bad');
-function renderBase() {
-  const d = base.data;
-  if (!d) return;
-  const secs = d.sectors.filter((s) => s.ideas || s.facts);
-  const ideas = d.ideas.filter((i) => !base.sector || i.sector === base.sector);
-  const secName = (id) => d.sectors.find((s) => s.id === id);
-  $('#v-base').innerHTML = `
-    <div class="base-head"><b>📚 Энциклопедия StartupBase</b><span>${d.totals.ideas} идей · ${d.totals.facts} фактов</span></div>
-    <div class="note" style="margin:0 0 10px">Каждая оценка совета и проверенный факт попадают сюда. Следующие исследования начинают с базы — и тратят меньше токенов.</div>
-    <div class="sector-chips"><button data-sector="" class="${!base.sector ? 'on' : ''}">Все</button>${secs.map((s) => `<button data-sector="${s.id}" class="${base.sector === s.id ? 'on' : ''}">${s.emoji} ${esc(s.name)} <i>${s.ideas}</i></button>`).join('')}</div>
-    ${base.sector ? `<div class="bcard sector-sum">${secName(base.sector).emoji} <b>${esc(secName(base.sector).name)}</b>: идей ${secName(base.sector).ideas}${secName(base.sector).avg ? `, средняя оценка ${secName(base.sector).avg.toFixed(1)}/10` : ''}, фактов ${secName(base.sector).facts} <button class="dept-go" data-facts="${base.sector}">📄 факты</button><div id="sectorFacts"></div></div>` : ''}
-    ${ideas.length ? ideas.map((i) => {
-      const s = secName(i.sector);
-      const open = base.open.has(i.id);
-      const ops = ['artem', 'dina', 'kamila', 'bakhtiyor'].map((a) => { const o = i.opinions.find((x) => x.agent === a); return `<span class="op ${scoreCls(o?.score)}" title="${esc(o?.verdict || '')}">${VC_NAMES[a]} <b>${o?.score ?? '—'}</b></span>`; }).join('');
-      return `<div class="idea" data-idea="${i.id}">
-        <div class="idea-top"><span class="avg ${scoreCls(i.avg_score)}">${i.avg_score != null ? i.avg_score.toFixed(1) : '—'}</span><div class="idea-title"><b>${esc(i.title)}</b><small>${s?.emoji || ''} ${esc(s?.name || i.sector)} · ${new Date(i.updated_at).toLocaleDateString('ru-RU')}${i.region ? ' · ' + esc(i.region) : ''}</small></div></div>
-        <div class="ops">${ops}</div>
-        ${open ? `<div class="idea-more"><p>${esc(i.summary)}</p>${i.opinions.map((o) => `<div class="op-line"><b>${VC_NAMES[o.agent] || o.agent} ${o.score ?? '?'}/10:</b> ${esc(o.verdict)}</div>`).join('')}${i.decision ? `<div class="op-line inv">💰 ${esc(i.decision)}</div>` : ''}<small class="muted">Папка: ${esc(i.folder || '—')} · фактов по идее: ${i.facts}</small></div>` : ''}
-      </div>`;
-    }).join('') : '<div class="empty">Пока ни одной оценённой идеи. Напиши Мирику: «оцените идею …»</div>'}`;
-}
-$('#v-base').addEventListener('click', async (e) => {
-  const sc = e.target.closest('[data-sector]');
-  if (sc) { base.sector = sc.dataset.sector || null; renderBase(); return; }
-  const fb = e.target.closest('[data-facts]');
-  if (fb) {
-    const facts = await api('/api/vc/facts/' + fb.dataset.facts);
-    $('#sectorFacts').innerHTML = facts.length ? `<ul class="facts">${facts.map((f) => `<li>${esc(f.text)} <small>${esc(f.as_of)}${f.source ? ' · ' + (/^https?:/.test(f.source) ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">источник</a>` : esc(f.source)) : ''}</small></li>`).join('')}</ul>` : '<div class="note">Фактов пока нет</div>';
-    return;
-  }
-  const card = e.target.closest('[data-idea]');
-  if (card) { const id = Number(card.dataset.idea); base.open.has(id) ? base.open.delete(id) : base.open.add(id); renderBase(); }
-});
 
 // ---------- офис: кнопки ----------
 document.querySelector('.world-tools').addEventListener('click', (e) => {

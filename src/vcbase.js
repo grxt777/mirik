@@ -190,6 +190,26 @@ export function overview() {
   return { sectors, ideas, totals: { ideas: ideas.length, facts: q('SELECT COUNT(*) n FROM facts').get().n } };
 }
 
+// Карточка идеи для страницы энциклопедии: все мнения (с полным текстом из файлов), факты идеи и отрасли
+export function ideaDetail(id, readFile) {
+  const idea = q('SELECT * FROM ideas WHERE id = ?').get(id);
+  if (!idea) return null;
+  const opinions = q('SELECT * FROM opinions WHERE idea_id = ? ORDER BY id DESC').all(id);
+  const latest = new Map();
+  for (const o of opinions) if (!latest.has(o.agent)) latest.set(o.agent, { ...o, text: o.file ? readFile(o.file) : '' });
+  return {
+    ...idea,
+    opinions: [...latest.values()],
+    history: opinions.length > latest.size ? opinions.length - latest.size : 0,
+    facts: q('SELECT * FROM facts WHERE idea_id = ? ORDER BY created_at DESC').all(id),
+    sectorFacts: q('SELECT * FROM facts WHERE sector = ? AND (idea_id IS NULL OR idea_id != ?) ORDER BY created_at DESC LIMIT 15').all(idea.sector, id),
+  };
+}
+
+export function allFacts(limit = 1000) {
+  return q('SELECT * FROM facts ORDER BY created_at DESC LIMIT ?').all(limit);
+}
+
 export function sectorFacts(sector, limit = 200) {
   return q('SELECT * FROM facts WHERE sector = ? ORDER BY created_at DESC LIMIT ?').all(normalizeSector(sector), limit);
 }
