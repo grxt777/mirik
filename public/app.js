@@ -127,8 +127,8 @@ function handle(e) {
       scheduleRender('stats');
       break;
     }
-    case 'delegate': office.delegate(e.from, e.to, e.text); break;
-    case 'report': office.report(e.from); break;
+    case 'delegate': office.delegate(e.from, e.to, e.text, e.talk); break;
+    case 'report': office.report(e.from, e.to, e.talk); break;
     case 'log': addLog(e.entry); break;
   }
 }

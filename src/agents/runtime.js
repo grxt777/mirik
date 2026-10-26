@@ -7,7 +7,7 @@ import { store, save } from '../store.js';
 import * as memdb from '../memdb.js';
 import { webTools } from '../tools/web.js';
 import { fileTools } from '../tools/files.js';
-import { browserTools, closeTaskPage } from '../tools/browser.js';
+import { browserTools, inspectTools, closeTaskPage } from '../tools/browser.js';
 import { docTools } from '../tools/docs.js';
 import { vcTools } from '../tools/vc.js';
 import { lookup as vcLookup, formatLookup as vcFormat, autoRecord as vcAutoRecord } from '../vcbase.js';
@@ -16,6 +16,8 @@ import { scrub, scrubAll, addJournal, recallFor, officeState, compressHistory } 
 
 // Расход: лимит токенов на одну задачу (вся команда вместе) — примерно $0.02 по цене самого дешёвого провайдера
 const TASK_TOKEN_BUDGET = 500_000;
+// IT-проект — целая команда (план, дизайн, бэк в паре, фронт, тест и правки): ему лимит больше, ~$0.08
+const IT_TOKEN_BUDGET = 2_000_000;
 // Сколько последних результатов инструментов держать целиком; более старые сжимаются
 const KEEP_FULL_RESULTS = 2;
 
@@ -121,12 +123,39 @@ const builtinTools = [
     },
     async run({ agent, task }, ctx) {
       if (!AGENTS[agent] || agent === 'mirik') return 'Нет такого сотрудника';
+      const team = AGENTS[ctx.agentId]?.team;
+      if (team && !team.includes(agent)) return `Поручать можно только своей команде: ${team.join(', ')}`;
       if (ctx.depth > 1) return 'Слишком глубокое делегирование';
+      if (AGENTS[agent].dept === 'it') ctx.control.limit = Math.max(ctx.control.limit || 0, IT_TOKEN_BUDGET);
       bus.emit('event', { type: 'delegate', from: ctx.agentId, to: agent, text: task.slice(0, 120) });
       log(ctx.agentId, `→ ${AGENTS[agent].name}: ${task}`, 'delegate');
       const report = await runAgent({ agentId: agent, input: task, ctx: { ...ctx, depth: ctx.depth + 1 } });
       bus.emit('event', { type: 'report', from: agent, to: ctx.agentId });
       return `Отчёт от ${AGENTS[agent].name}:\n${report}`;
+    },
+  },
+  {
+    name: 'ask_colleague',
+    description: 'Переговорить с коллегой, с которым вы работаете вместе: договориться об интерфейсе, задать вопрос, попросить ревью или оценку. Коллега не видит твоей переписки — дай ему суть и пути файлов. Возвращает его ответ.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', enum: [...new Set(AGENT_LIST.flatMap((a) => a.peers || []))] },
+        message: { type: 'string', description: 'Сообщение коллеге: контекст, вопрос или что проверить, пути файлов' },
+      },
+      required: ['agent', 'message'],
+    },
+    async run({ agent, message }, ctx) {
+      const me = AGENTS[ctx.agentId];
+      if (!me?.peers?.includes(agent)) return `Переговариваться можно только с: ${(me?.peers || []).join(', ') || 'никем'}`;
+      // отвечающий не переспрашивает обратно — иначе пара уйдёт в бесконечный разговор
+      if (ctx.talking) return 'Ты сейчас отвечаешь коллеге — не переспрашивай, ответь ему в своём отчёте.';
+      bus.emit('event', { type: 'delegate', from: ctx.agentId, to: agent, text: message.slice(0, 120), talk: true });
+      log(ctx.agentId, `💬 ${AGENTS[agent].name}: ${message}`, 'delegate');
+      const input = `Сообщение от коллеги — ${me.name} (${me.role}), вы вместе работаете над задачей:\n${message}\n\nОтветь по делу: на вопрос, с ревью или оценкой (файл, место, как исправить). Можешь читать файлы и запускать код, но его работу за него не переделывай.`;
+      const reply = await runAgent({ agentId: agent, input, ctx: { ...ctx, depth: ctx.depth + 1, talking: true } });
+      bus.emit('event', { type: 'report', from: agent, to: ctx.agentId, talk: true });
+      return `Ответ от ${AGENTS[agent].name}:\n${reply}`;
     },
   },
   {
@@ -187,7 +216,7 @@ const builtinTools = [
   },
 ];
 
-const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...docTools, ...vcTools].map((t) => [t.name, t]));
+const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...inspectTools, ...docTools, ...vcTools].map((t) => [t.name, t]));
 
 const toolSchema = (t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } });
 
@@ -211,6 +240,8 @@ function activityLabel(name, args) {
     case 'vc_save_facts': return `записывает в базу ${args.facts?.length || ''} фактов`;
     case 'vc_record_idea': return 'заносит идею в энциклопедию';
     case 'delegate': return `поручает ${AGENTS[args.agent]?.name || ''}`;
+    case 'ask_colleague': return `обсуждает с ${AGENTS[args.agent]?.name || 'коллегой'}`;
+    case 'inspect_page': return `смотрит ${short(args.target)}`;
     case 'ask_sanya': return 'пишет Сане';
     case 'send_file': return 'отправляет файл';
     case 'remember': return 'записывает в блокнот';
@@ -220,11 +251,18 @@ function activityLabel(name, args) {
 
 // Старые результаты инструментов (снимки страниц, вывод терминала) больше не нужны модели целиком —
 // без этого каждый следующий шаг заново отправляет всё, и расход растёт квадратично.
+// Скриншоты от инструментов тоже дорогие: модели хватает двух последних осмотров
+const SHOTS = new WeakSet();
+const KEEP_SHOTS = 2;
 function compact(messages) {
   const toolIdx = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
   for (const i of toolIdx.slice(0, -KEEP_FULL_RESULTS)) {
     const m = messages[i];
     if (m.content.length > 1500) m.content = m.content.slice(0, 1000) + `\n…[сокращено: старый результат, было ${m.content.length} симв.]`;
+  }
+  for (const m of messages.filter((x) => SHOTS.has(x)).slice(0, -KEEP_SHOTS)) {
+    m.content = '[старые скриншоты убраны для экономии — файлы остались в папке shots]';
+    SHOTS.delete(m);
   }
 }
 
@@ -245,6 +283,13 @@ function mirikContext(ctx, input) {
 export async function runAgent({ agentId, input, history = [], ctx }) {
   const agent = AGENTS[agentId];
   const tools = agent.tools.map((n) => TOOLS[n]).filter(Boolean);
+  // CTO видит в поручениях только свою команду, пары — только напарника
+  const schemas = tools.map((t) => {
+    const sc = toolSchema(t);
+    const only = t.name === 'delegate' ? agent.team : t.name === 'ask_colleague' ? agent.peers : null;
+    if (only) sc.function.parameters = { ...sc.function.parameters, properties: { ...sc.function.parameters.properties, agent: { type: 'string', enum: only } } };
+    return sc;
+  });
   const maxSteps = agent.maxSteps || (agentId === 'mirik' ? 15 : 20);
   let extra = agentId === 'mirik' ? mirikContext(ctx, input) : '';
   // венчурщики начинают с энциклопедии StartupBase: что уже известно по теме — не ищут заново
@@ -266,9 +311,9 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
       await waitIfPaused(ctx, agentId);
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
       compact(messages);
-      const over = budget.tokens > TASK_TOKEN_BUDGET;
+      const over = budget.tokens > (budget.limit || TASK_TOKEN_BUDGET);
       if (over) messages.push({ role: 'user', content: 'Лимит токенов на задачу исчерпан. Больше никаких инструментов — сразу дай итоговый отчёт по тому, что уже сделано.' });
-      const msg = await chat({ messages, tools: over ? [] : tools.map(toolSchema), agent: agentId });
+      const msg = await chat({ messages, tools: over ? [] : schemas, agent: agentId });
       budget.tokens += msg._usage?.total_tokens || 0;
       const calls = msg.tool_calls || [];
       if (!calls.length) {
@@ -305,9 +350,11 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
           setState(agentId, { status: call.function.name === 'delegate' ? 'managing' : 'working', activity: label, taskId: ctx.taskId });
           taskStep(ctx.task, agentId, '🔧 ' + label);
           log(agentId, label, 'tool');
-          let content;
+          let content, images;
           try {
-            content = tool ? String(await tool.run(args, actx)) : `Нет инструмента ${call.function.name}`;
+            const out = tool ? await tool.run(args, actx) : `Нет инструмента ${call.function.name}`;
+            if (out && typeof out === 'object' && out.images) ({ text: content, images } = out);
+            content = String(content ?? out);
             // мнение совета сохранено → отметка + автозапись идеи в энциклопедию
             const op = call.function.name === 'write_file' && String(args.path || '').replace(/^\/+/, '').match(/^(projects\/vc\/[^/]+)\/opinions\/[\w-]+\.md$/);
             if (op && content.startsWith('Записано')) { actx.opinionSaved = true; try { vcAutoRecord(op[1], ctx.task?.text, wsPath); } catch (e) { log(agentId, 'база: ' + e.message, 'error'); } }
@@ -315,13 +362,21 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
             content = 'Ошибка: ' + e.message;
             log(agentId, content, 'error');
           }
-          return { role: 'tool', tool_call_id: call.id, content: scrub(content).slice(0, 12000) };
+          return { role: 'tool', tool_call_id: call.id, content: scrub(content).slice(0, 12000), images };
         })
       );
       if (repeats >= 2) {
         results.at(-1).content += '\n\n[СИСТЕМА] Ты третий раз подряд делаешь одно и то же. Не жди и не опрашивай: сотрудники работают синхронно — если отчёт пришёл, работа закончена. Смени подход или подведи итог.';
       }
+      // картинки нельзя вернуть в ответе инструмента — передаём их следующим сообщением
+      const shots = results.flatMap((r) => r.images || []);
+      for (const r of results) delete r.images;
       messages.push(...results);
+      if (shots.length) {
+        const m = { role: 'user', content: [{ type: 'text', text: 'Скриншоты из inspect_page:' }, ...shots.slice(-4)] };
+        SHOTS.add(m);
+        messages.push(m);
+      }
       setState(agentId, { status: 'thinking', activity: 'думает…' });
     }
     // лимит шагов: не обрываемся на полуслове, а просим честный итог без инструментов
