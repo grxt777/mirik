@@ -67,8 +67,38 @@ export function createTask({ text, agent = 'mirik', source = 'panel', chatId = n
 function taskStep(task, agent, text) {
   task.steps.push({ t: Date.now(), agent, text: scrub(text).slice(0, 300) });
   if (task.steps.length > 120) task.steps.shift();
+  updateProgress(task);
   bus.emit('event', { type: 'task', task });
 }
+
+// ---------- прогресс задачи (0–100%) ----------
+// Дерево работы: каждый запуск сотрудника — узел; поручения идут «этапами» (пачка delegate в одном ответе).
+// Прогресс узла = пройденные этапы + средний прогресс тех, кто работает сейчас; без поручений — по числу шагов.
+const roots = new Map(); // taskId -> корневой узел
+// Сколько этапов поручений обычно у процесса, который начинается с этого сотрудника
+const ROUNDS_HINT = { borya: 2, artem: 2, dina: 2, kamila: 2, sanjar: 2 };
+
+function newNode(agentId) {
+  return { agentId, step: 0, done: false, expected: AGENTS[agentId]?.rounds || 0, roundsDone: 0, inRound: false, current: [] };
+}
+function nodeProgress(n) {
+  if (n.done) return 1;
+  const own = 1 - Math.exp(-n.step / 6); // каждый шаг ближе к концу, но 100% — только по факту
+  if (!n.expected && !n.roundsDone && !n.inRound) return 0.92 * own;
+  const cur = n.current.length ? n.current.reduce((x, c) => x + nodeProgress(c), 0) / n.current.length : 0;
+  const stages = Math.max(n.expected, n.roundsDone + (n.inRound ? 1 : 0), 1);
+  return 0.05 + 0.88 * Math.min(1, (n.roundsDone + (n.inRound ? cur : 0)) / stages);
+}
+function updateProgress(task) {
+  const root = roots.get(task.id);
+  if (!root || !ACTIVE_STATUSES.has(task.status)) return;
+  const p = Math.min(99, Math.round(nodeProgress(root) * 100));
+  task.progress = Math.max(task.progress || 0, p); // полоска не ползёт назад
+  // оценка остатка: сколько уже шло (без ожидания ответов владельца) × сколько осталось
+  const spent = Date.now() - task.createdAt - (task.waitMs || 0);
+  task.etaMs = task.progress >= 8 ? Math.round(spent * (100 - task.progress) / task.progress) : null;
+}
+const ACTIVE_STATUSES = new Set(['running', 'paused', 'queued']);
 
 export function cancelTask(id) {
   const r = running.get(id);
@@ -132,7 +162,7 @@ const builtinTools = [
       if (AGENTS[agent].dept === 'it') ctx.control.limit = Math.max(ctx.control.limit || 0, IT_TOKEN_BUDGET);
       bus.emit('event', { type: 'delegate', from: ctx.agentId, to: agent, text: task.slice(0, 120) });
       log(ctx.agentId, `→ ${AGENTS[agent].name}: ${task}`, 'delegate');
-      const report = await runAgent({ agentId: agent, input: task, ctx: { ...ctx, depth: ctx.depth + 1 } });
+      const report = await runAgent({ agentId: agent, input: task, ctx: { ...ctx, depth: ctx.depth + 1, delegated: true } });
       bus.emit('event', { type: 'report', from: agent, to: ctx.agentId });
       return `Отчёт от ${AGENTS[agent].name}:\n${report}`;
     },
@@ -240,7 +270,9 @@ const builtinTools = [
         ctx.control.asked = (ctx.control.asked || 0) + 1;
         setState(ctx.agentId, { status: 'waiting', activity: 'ждёт ответа владельца', taskId: ctx.taskId });
         taskStep(ctx.task, ctx.agentId, '❓ ' + q.question);
+        const waitFrom = Date.now();
         const answer = await ctx.ask({ question: q.question, options: q.options || [], n: i + 1, total: list.length, cancelled: () => ctx.control.cancelled });
+        ctx.task.waitMs = (ctx.task.waitMs || 0) + Date.now() - waitFrom;
         if (ctx.control.cancelled) throw new Error('Задача отменена');
         const a = answer ? scrub(answer) : null;
         (ctx.task.qa ||= []).push({ q: q.question, a });
@@ -347,12 +379,17 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
   const messages = [{ role: 'system', content: system }, ...history, { role: 'user', content: input }];
   const budget = (ctx.control ||= {});
   budget.tokens ||= 0;
-  const actx = { ...ctx, agentId };
+  // узел в дереве прогресса: поручение — ребёнок того, кто поручил
+  const node = newNode(agentId);
+  if (ctx.node && ctx.delegated) ctx.node.current.push(node);
+  else if (!ctx.node) roots.set(ctx.taskId, node);
+  const actx = { ...ctx, agentId, node, delegated: false };
 
   setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
   let nudges = 0, lastKey = '', repeats = 0;
   try {
     for (let step = 0; step < maxSteps; step++) {
+      node.step = step;
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
       await waitIfPaused(ctx, agentId);
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
@@ -387,6 +424,14 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
       messages.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
       if (msg.content) taskStep(ctx.task, agentId, '💭 ' + msg.content);
 
+      // пачка поручений — новый этап; сколько этапов ждать, видно по тому, кому поручили
+      const deleg = calls.filter((c) => c.function.name === 'delegate');
+      if (deleg.length) {
+        const targets = deleg.map((c) => { try { return JSON.parse(c.function.arguments).agent; } catch { return null; } });
+        if (!node.roundsDone) node.expected = Math.max(node.expected, ...targets.map((t) => ROUNDS_HINT[t] || 1));
+        node.inRound = true;
+        node.current = [];
+      }
       const results = await Promise.all(
         calls.map(async (call) => {
           let args = {};
@@ -417,6 +462,7 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
       // картинки нельзя вернуть в ответе инструмента — передаём их следующим сообщением
       const shots = results.flatMap((r) => r.images || []);
       for (const r of results) delete r.images;
+      if (deleg.length) { node.roundsDone++; node.inRound = false; node.current = []; }
       messages.push(...results);
       if (shots.length) {
         const m = { role: 'user', content: [{ type: 'text', text: 'Скриншоты из inspect_page:' }, ...shots.slice(-4)] };
@@ -432,6 +478,7 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
     taskStep(ctx.task, agentId, '⏹ ' + text);
     return text;
   } finally {
+    node.done = true;
     setState(agentId, { status: 'idle', activity: 'отдыхает', taskId: null });
   }
 }
@@ -452,6 +499,8 @@ export async function runTask(task, io = {}, { input, history = [] } = {}) {
       ctx: { task, taskId: task.id, depth: 0, control, ...io },
     });
     task.status = 'done';
+    task.progress = 100;
+    task.etaMs = 0;
     task.result = scrub(result);
     store.stats.tasksDone++;
     addJournal(task);
@@ -464,6 +513,7 @@ export async function runTask(task, io = {}, { input, history = [] } = {}) {
   } finally {
     task.finishedAt = Date.now();
     running.delete(task.id);
+    roots.delete(task.id);
     closeTaskPage(task.id);
     save();
     bus.emit('event', { type: 'task', task });

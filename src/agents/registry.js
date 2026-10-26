@@ -165,6 +165,7 @@ e-class (https://eclass.inha.ac.kr, Moodle/Coursemos): логин — секре
     dept: 'it',
     emoji: '🧭',
     maxSteps: 30,
+    rounds: 4, // этапы: дизайн+бэк → фронт → QA → правки/приёмка (для полоски прогресса)
     team: ['madina', 'oleg', 'aziz', 'zhenya', 'sveta'],
     desk: { x: 31, y: 8 },
     look: { jacket: '#2c3e50', shirt: '#ecf0f1', hair: '#1b1b1b', hairStyle: 'short', skin: '#e0ac69', stubble: true, glasses: true, pants: '#2c3e50' },

@@ -159,6 +159,15 @@ const taskKeyboard = (task) => new InlineKeyboard()
   .text(task.status === 'paused' ? '▶ Продолжить' : '⏸ Пауза', `${task.status === 'paused' ? 'resume' : 'pause'}:${task.id}`)
   .text('⛔ Стоп', `stop:${task.id}`);
 
+// Полоска прогресса: ▓▓▓▓▓░░░░░ 47% · осталось ~3 мин
+const fmtLeft = (ms) => { const m = Math.round(ms / 60000); return ms < 60000 ? 'меньше минуты' : m < 60 ? `~${m} мин` : `~${Math.floor(m / 60)} ч ${m % 60} мин`; };
+export function progressLine(task) {
+  const p = Math.max(0, Math.min(100, task.progress || 0));
+  const full = Math.round(p / 10);
+  const left = task.etaMs != null && p < 100 ? ` · осталось ${fmtLeft(task.etaMs)}` : '';
+  return `${'▓'.repeat(full)}${'░'.repeat(10 - full)} ${p}%${left}`;
+}
+
 function liveStatus(api, chatId, statusMsgId, taskRef) {
   let last = 0, timer = null, text = '';
   const render = () => {
@@ -166,7 +175,7 @@ function liveStatus(api, chatId, statusMsgId, taskRef) {
     if (!task) return;
     const lines = task.steps.slice(-6).map((s) => `${AGENTS[s.agent]?.emoji || '•'} ${AGENTS[s.agent]?.name}: ${s.text.slice(0, 120)}`);
     const paused = task.status === 'paused';
-    const next = `${paused ? '⏸ На паузе' : '⏳ Работаем…'}\n\n${lines.join('\n')}`;
+    const next = `${paused ? '⏸ На паузе' : '⏳ Работаем…'}\n${progressLine(task)}\n\n${lines.join('\n')}`;
     if (next === text) return;
     text = next;
     last = Date.now();
@@ -308,7 +317,7 @@ function tasksText() {
 async function replyTasks(ctx) {
   await ctx.reply(tasksText());
   for (const t of store.tasks.filter((t) => t.status === 'running' || t.status === 'paused')) {
-    await ctx.reply(`${TASK_ICON[t.status]} ${t.text.slice(0, 200)}\n— ${t.steps.at(-1)?.text.slice(0, 120) || 'в работе'}`, { reply_markup: taskKeyboard(t) });
+    await ctx.reply(`${TASK_ICON[t.status]} ${t.text.slice(0, 200)}\n${progressLine(t)}\n— ${t.steps.at(-1)?.text.slice(0, 120) || 'в работе'}`, { reply_markup: taskKeyboard(t) });
   }
 }
 

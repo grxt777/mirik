@@ -219,6 +219,14 @@ function stepLine(s) {
   return `<li>${a?.emoji || '•'} <b>${esc(a?.name || s.agent)}</b> ${esc(plain(s.text).slice(0, 220))}</li>`;
 }
 
+// Полоска прогресса задачи (оценку считает сервер: этапы поручений + шаги сотрудников)
+const fmtLeft = (ms) => { const m = Math.round(ms / 60000); return ms < 60000 ? 'меньше минуты' : m < 60 ? `~${m} мин` : `~${Math.floor(m / 60)} ч ${m % 60} мин`; };
+function progressHTML(t) {
+  const p = Math.max(0, Math.min(100, t.progress || 0));
+  const left = t.etaMs != null ? ` · осталось ${fmtLeft(t.etaMs)}` : '';
+  return `<div class="progress" title="Оценка по этапам работы"><div class="progress-bar"><i style="width:${p}%"></i></div><span>${p}%${left}</span></div>`;
+}
+
 function messageHTML(t) {
   const a = state.agents[t.agent] || {};
   const time = new Date(t.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -232,7 +240,7 @@ function messageHTML(t) {
   let body;
   if (running) {
     const la = last && state.agents[last.agent];
-    body = `<div class="typing"><span></span><span></span><span></span></div>${last ? `<div class="live">${la?.emoji || ''} ${esc(la?.name || '')}: ${esc(plain(last.text).slice(0, 140))}</div>` : ''}`;
+    body = `${progressHTML(t)}<div class="typing"><span></span><span></span><span></span></div>${last ? `<div class="live">${la?.emoji || ''} ${esc(la?.name || '')}: ${esc(plain(last.text).slice(0, 140))}</div>` : ''}`;
   } else body = `<div class="md">${md(t.result || (t.status === 'cancelled' ? 'Остановлено.' : '—'))}</div>`;
   const [stLabel, stCls] = TASK_STATUS[t.status] || ['', ''];
   const status = t.status !== 'done' && stLabel ? `<span class="status ${stCls}">${stLabel}</span>` : '';
@@ -291,7 +299,7 @@ function popItem(t) {
   return `<div class="pitem ${t.status}">
     <div class="pitem-top"><img src="${avatarURL(a.id, a.look)}" alt=""><div class="pitem-text">${esc(t.text.slice(0, 140))}</div><span class="status ${stCls}">${stLabel}</span></div>
     <div class="pitem-meta"><span>${time}</span>${who.length ? `<span class="who-row">${who.map((w) => `<img title="${esc(w.name)}" src="${avatarURL(w.id, w.look)}" alt="">`).join('')}</span>` : ''}</div>
-    <div class="pitem-detail">${detail}</div>
+    ${active ? progressHTML(t) : ''}<div class="pitem-detail">${detail}</div>
     <div class="bubble-actions">${taskButtons(t, true)}</div>
   </div>`;
 }
