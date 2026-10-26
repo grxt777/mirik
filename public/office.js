@@ -154,7 +154,7 @@ const POIS = [
   { x: 31, y: 2, dir: 'up', say: '🏆 когда золотая кнопка?', who: 'yt' },
   { x: 21, y: 10, dir: 'right', say: '🚪 к соседям', who: 'yt' },
   // StartupBase
-  { x: 24, y: 20, dir: 'down', say: '🎤 питчим инвесторам', who: 'vc' },
+  { x: 24, y: 20, dir: 'down', say: '🎤 разбор на сцене', who: 'vc' },
   { x: 26, y: 21, dir: 'up', say: '👏 сильный питч', who: 'vc' },
   { x: 19, y: 21, dir: 'right', say: '📊 рисую воронку', who: 'vc' },
   { x: 33, y: 21, dir: 'up', say: '📞 созвон с фондом', who: 'vc' },
@@ -384,7 +384,7 @@ function drawCat(c, x, y, o) {
 }
 
 // ---------- экраны мониторов ----------
-const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash', vlad: 'trends', arina: 'script', gosha: 'timeline', artem: 'dash', dina: 'sheet', rustam: 'slides' };
+const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash', vlad: 'trends', arina: 'script', gosha: 'timeline', artem: 'dash', dina: 'sheet', kamila: 'browser', bakhtiyor: 'dash' };
 function drawScreen(c, x, y, w, h, kind, busy, t, seed) {
   if (!kind) { px(c, x, y, w, h, '#0e1018'); px(c, x + 2, y + 2, 4, 1, 'rgba(255,255,255,.08)'); return; }
   if (!busy) {
@@ -468,9 +468,10 @@ const GLYPHS = {
   gosha: ['🎞', '✂️', '▶', '🎧'],
   artem: ['📊', '🔍', 'TAM', '📈'],
   dina: ['💵', '%', 'Σ', 'LTV'],
-  rustam: ['🎤', '🚀', '💼', '🤝'],
+  kamila: ['🛒', '🤔', '💸', '👎', '👍'],
+  bakhtiyor: ['💰', '📈', '🤝', 'x10'],
 };
-const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80', vlad: '255,80,90', arina: '255,200,60', gosha: '255,140,50', artem: '93,173,226', dina: '46,204,113', rustam: '255,159,67' };
+const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80', vlad: '255,80,90', arina: '255,200,60', gosha: '255,140,50', artem: '93,173,226', dina: '46,204,113', kamila: '253,121,168', bakhtiyor: '255,200,60' };
 const EMPTY_DESKS = [{ x: 10, y: 4 }, { x: 10, y: 8 }];
 
 export class Office {
