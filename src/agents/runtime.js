@@ -14,6 +14,9 @@ import { lookup as vcLookup, formatLookup as vcFormat, autoRecord as vcAutoRecor
 import { wsPath } from '../tools/files.js';
 import { scrub, scrubAll, addJournal, recallFor, officeState, compressHistory } from '../memory.js';
 
+// Уточняющих вопросов владельцу — не больше этого на одну задачу
+const MAX_QUESTIONS = 5;
+
 // Расход: лимит токенов на одну задачу (вся команда вместе) — примерно $0.02 по цене самого дешёвого провайдера
 const TASK_TOKEN_BUDGET = 500_000;
 // IT-проект — целая команда (план, дизайн, бэк в паре, фронт, тест и правки): ему лимит больше, ~$0.08
@@ -206,6 +209,48 @@ const builtinTools = [
     },
   },
   {
+    name: 'ask_owner',
+    description: `Задать владельцу уточняющие вопросы в Telegram и дождаться ответов. Только если без ответа нельзя сделать хорошо и его не узнать из памяти, контекста или у Сани. Все вопросы — одним вызовом, до начала работы. Максимум ${MAX_QUESTIONS} на задачу. Давай 2–4 варианта ответа, где можно.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          maxItems: MAX_QUESTIONS,
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'Короткий конкретный вопрос' },
+              options: { type: 'array', maxItems: 4, items: { type: 'string' }, description: 'Варианты-кнопки (коротко), владелец может ответить и своим текстом' },
+            },
+            required: ['question'],
+          },
+        },
+      },
+      required: ['questions'],
+    },
+    async run({ questions = [] }, ctx) {
+      if (ctx.depth > 0 || !ctx.ask) return 'Спросить владельца сейчас нельзя — прими разумное решение сам и назови допущение в ответе.';
+      const left = MAX_QUESTIONS - (ctx.control.asked || 0);
+      if (left <= 0) return `Лимит ${MAX_QUESTIONS} вопросов на задачу исчерпан — дальше решай сам и назови допущения в ответе.`;
+      const list = questions.filter((q) => q?.question).slice(0, left);
+      const out = [];
+      for (const [i, q] of list.entries()) {
+        if (ctx.control.cancelled) throw new Error('Задача отменена');
+        ctx.control.asked = (ctx.control.asked || 0) + 1;
+        setState(ctx.agentId, { status: 'waiting', activity: 'ждёт ответа владельца', taskId: ctx.taskId });
+        taskStep(ctx.task, ctx.agentId, '❓ ' + q.question);
+        const answer = await ctx.ask({ question: q.question, options: q.options || [], n: i + 1, total: list.length, cancelled: () => ctx.control.cancelled });
+        if (ctx.control.cancelled) throw new Error('Задача отменена');
+        const a = answer ? scrub(answer) : null;
+        (ctx.task.qa ||= []).push({ q: q.question, a });
+        out.push(`В: ${q.question}\nО: ${a ?? 'владелец не ответил / «решай сам» — прими разумное решение и назови его'}`);
+      }
+      const cut = questions.length > list.length ? `\n\n(Ещё ${questions.length - list.length} вопр. не задано — лимит ${MAX_QUESTIONS}. Решай сам.)` : '';
+      return out.join('\n\n') + cut;
+    },
+  },
+  {
     name: 'notify_user',
     description: 'Отправить владельцу промежуточное сообщение о прогрессе.',
     parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
@@ -243,6 +288,7 @@ function activityLabel(name, args) {
     case 'ask_colleague': return `обсуждает с ${AGENTS[args.agent]?.name || 'коллегой'}`;
     case 'inspect_page': return `смотрит ${short(args.target)}`;
     case 'ask_sanya': return 'пишет Сане';
+    case 'ask_owner': return 'уточняет у владельца';
     case 'send_file': return 'отправляет файл';
     case 'remember': return 'записывает в блокнот';
     default: return name;
@@ -431,7 +477,9 @@ export async function talkToMirik(chatId, { text, content, source = 'telegram', 
   const window = memdb.history(chatId, 20);
   const history = window.map(({ role, content }) => ({ role, content }));
   const result = await runTask(task, { ...io, historyIds: new Set(window.map((m) => m.id)) }, { input: content ?? text, history });
-  memdb.addMessage(chatId, 'user', scrub(text));
+  // уточнения тоже часть разговора: без них в следующий раз Мирик не вспомнит, о чём договорились
+  const qa = task.qa?.length ? '\n\n[Уточнения по ходу]\n' + task.qa.map((x) => `— ${x.q}\n  ${x.a ?? '(решил сам)'}`).join('\n') : '';
+  memdb.addMessage(chatId, 'user', scrub(text) + qa);
   memdb.addMessage(chatId, 'assistant', scrub(result));
   // старая переписка не выбрасывается, а сжимается в сводку
   compressHistory(chatId, async (prev, chunk) => (await chat({

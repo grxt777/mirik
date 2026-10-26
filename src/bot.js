@@ -17,7 +17,7 @@ import * as chatlog from './chatlog.js';
 
 export let bot = null;
 
-const STATUS_ICON = { idle: '😴', thinking: '🤔', working: '⚙️', managing: '📣' };
+const STATUS_ICON = { idle: '😴', thinking: '🤔', working: '⚙️', managing: '📣', waiting: '❓' };
 
 function isOwner(id) {
   if (config.ownerIds.length) return config.ownerIds.includes(id);
@@ -110,9 +110,43 @@ export async function sendMedia(api, chatId, full, caption) {
   return api.sendDocument(chatId, new InputFile(full), opts);
 }
 
+// ---------- уточняющие вопросы владельцу ----------
+// Пока Мирик ждёт ответа, следующее сообщение владельца в этом чате (текст, голосовое, кнопка) — ответ, а не новая задача.
+const pendingAsk = new Map(); // chatId -> { msgId, options, finish(answer) }
+const ASK_TIMEOUT = 10 * 60_000;
+
+function askOwner(api, chatId, { question, options = [], n, total, cancelled }) {
+  const kb = new InlineKeyboard();
+  options.slice(0, 4).forEach((o, i) => kb.text(String(o).slice(0, 60), `ans:${i}`).row());
+  kb.text('🤷 Решай сам', 'ans:skip');
+  const hint = options.length ? 'Выбери вариант или напиши свой ответ.' : 'Напиши ответ (можно голосовым).';
+  return new Promise(async (resolve) => {
+    pendingAsk.get(chatId)?.finish(null); // старый вопрос в этом чате больше не ждём
+    let msg;
+    try {
+      msg = await api.sendMessage(chatId, `❓ Мирик уточняет${total > 1 ? ` (${n}/${total})` : ''}:
+${question}
+
+${hint}`, { reply_markup: kb });
+    } catch { return resolve(null); }
+    const done = (answer, note) => {
+      clearTimeout(timer); clearInterval(watch);
+      if (pendingAsk.get(chatId)?.msgId === msg.message_id) pendingAsk.delete(chatId);
+      api.editMessageText(chatId, msg.message_id, `❓ ${question}
+
+${note || (answer ? '✅ ' + answer.slice(0, 500) : '🤷 Мирик решит сам')}`).catch(() => {});
+      resolve(answer);
+    };
+    const timer = setTimeout(() => done(null, '⌛ Без ответа — Мирик решит сам'), ASK_TIMEOUT);
+    const watch = setInterval(() => cancelled?.() && done(null, '⛔ Задача остановлена'), 1000);
+    pendingAsk.set(chatId, { msgId: msg.message_id, options, finish: done });
+  });
+}
+
 // io-объект для агентов: как им писать в этот чат
 function chatIO(api, chatId) {
   return {
+    ask: (q) => askOwner(api, chatId, q),
     notify: (text) => api.sendMessage(chatId, '📣 ' + String(text).slice(0, 4000)).catch(() => {}),
     sendFile: (full, caption) => sendMedia(api, chatId, full, caption),
     sendPhoto: (buf, caption) => api.sendPhoto(chatId, new InputFile(buf, 'screen.jpg'), { caption: caption?.slice(0, 1000) }),
@@ -213,6 +247,9 @@ export async function chatContext(ctx) {
 
 async function handleTask(ctx, { text, content, agent = 'mirik' }) {
   const chatId = ctx.chat.id;
+  // Мирик ждёт ответа на уточняющий вопрос — это он и есть
+  const waiting = agent === 'mirik' && pendingAsk.get(chatId);
+  if (waiting) return waiting.finish(String(text).replace(/\n\[голосовое сохранено:[^\]]*\]$/, '').trim());
   // контекст чата: что обсуждали до вызова, файлы и фото оттуда
   const cx = await chatContext(ctx).catch(() => null);
   if (cx) {
@@ -330,7 +367,7 @@ export function startBot() {
     }
     const owner = isOwner(id);
     if (group) {
-      if (!owner || !addressed(ctx, owner)) return; // в группе молчим, пока босс не позовёт
+      if (!owner || !(addressed(ctx, owner) || pendingAsk.has(ctx.chat.id))) return; // в группе молчим, пока босс не позовёт (или не отвечает на вопрос)
       setHomeChat(ctx.chat.id);
       return next();
     }
@@ -344,7 +381,7 @@ export function startBot() {
 
   bot.command('start', (ctx) =>
     ctx.reply(
-      `Привет! Я Мирик 👑 — старший ИИ-агент.\nУ меня два департамента:\n🏢 Операционный — программист, исследователь, оператор браузера и отличница.\n🎬 Ютуберов — продюсер, сценаристка и монтажёр: делают Shorts и ролики под ключ.\n💼 StartupBase — 2 венчурных аналитика, клиент и инвестор: каждый даёт своё мнение об идее.\n\nПросто напиши задание — я раздам его своим и пришлю результат. Например: «сделайте шортс про 3 факта о кофе».\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
+      `Привет! Я Мирик 👑 — старший ИИ-агент.\nМоя команда:\n🏢 Операционный — программист, исследователь, оператор браузера и отличница.\n💻 IT-департамент — CTO, дизайнер, два бэкендера, фронтендер и QA: сайты, приложения и боты под ключ.\n💼 StartupBase — аналитики, клиент, юрист и инвестор: каждый даёт своё мнение об идее.\n\nПросто напиши задание — я раздам его своим и пришлю результат. Например: «сделайте лендинг для кофейни».\nЕсли без уточнений не обойтись — я спрошу (до 5 вопросов, с вариантами ответа).\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
       { reply_markup: officeKeyboard() }
     )
   );
@@ -366,6 +403,12 @@ export function startBot() {
   bot.callbackQuery('team', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(teamText())));
   bot.callbackQuery('tasks', (ctx) => ctx.answerCallbackQuery().then(() => replyTasks(ctx)));
   bot.callbackQuery('stats', (ctx) => ctx.answerCallbackQuery().then(() => ctx.reply(statsText())));
+  bot.callbackQuery(/^ans:(\d+|skip)$/, async (ctx) => {
+    const p = pendingAsk.get(ctx.chat.id);
+    if (!p || p.msgId !== ctx.callbackQuery.message?.message_id) return ctx.answerCallbackQuery('Этот вопрос уже неактуален');
+    await ctx.answerCallbackQuery();
+    p.finish(ctx.match[1] === 'skip' ? null : String(p.options[Number(ctx.match[1])] ?? ''));
+  });
   bot.callbackQuery(/^stop:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery(cancelTask(ctx.match[1]) ? 'Останавливаю…' : 'Задача уже не выполняется');
   });
@@ -473,7 +516,7 @@ export function startBot() {
     try {
       const file = await ctx.api.getFile(media.file_id);
       const audio = Buffer.from(await (await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`)).arrayBuffer());
-      // сохраняем и сам звук — пригодится как озвучка для ролика
+      // сохраняем и сам звук — вдруг пригодится
       const ext = (file.file_path.split('.').pop() || 'ogg').replace('oga', 'ogg');
       const saved = `inbox/voice_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
       await fs.mkdir(path.dirname(wsPath(saved)), { recursive: true });
@@ -490,7 +533,7 @@ export function startBot() {
       if (!text) return ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Саня не расслышал — попробуй ещё раз');
       await ctx.api.editMessageText(ctx.chat.id, note.message_id, `🎙 Саня расшифровал: «${text.slice(0, 3800)}»`);
       log('mirik', '🎙 Саня расшифровал голосовое', 'delegate');
-      handleTask(ctx, { text: (m.caption ? m.caption + '\n' : '') + text + `\n[голосовое сохранено: ${saved} — можно использовать как озвучку]` });
+      handleTask(ctx, { text: (m.caption ? m.caption + '\n' : '') + text + `\n[голосовое сохранено: ${saved}]` });
     } catch (e) {
       await ctx.api.editMessageText(ctx.chat.id, note.message_id, '🎙 Саня не смог расшифровать: ' + e.message).catch(() => {});
     }
