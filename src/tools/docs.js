@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { wsPath } from './files.js';
-import { htmlToPdf } from './browser.js';
+import { htmlToPdf, pdfFromFile } from './browser.js';
 import { sandboxSpawn } from '../sandbox.js';
 
 const HELPER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'doctool.py');
@@ -66,6 +66,18 @@ function mdToHtml(md) {
 }
 
 export const docTools = [
+  {
+    name: 'html_to_pdf',
+    description: 'Превратить HTML-файл из рабочей папки в PDF. format="slides" — страницы 1920x1080 (питч-дек: каждый <section class="slide"> на своей странице), "a4" — документ.',
+    parameters: { type: 'object', properties: { html: { type: 'string' }, out: { type: 'string' }, format: { type: 'string', enum: ['slides', 'a4'] } }, required: ['html', 'out'] },
+    async run({ html, out, format = 'slides' }) {
+      const outFull = wsPath(out);
+      await fs.mkdir(path.dirname(outFull), { recursive: true });
+      await pdfFromFile(wsPath(html), outFull, format);
+      const { size } = await fs.stat(outFull);
+      return `Готово: ${out} (${(size / 1048576).toFixed(1)} МБ)`;
+    },
+  },
   {
     name: 'read_document',
     description: 'Прочитать документ из рабочей папки: PDF, DOCX, PPTX, XLSX или текст. Возвращает текст (у PDF — по страницам).',

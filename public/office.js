@@ -4,7 +4,11 @@ export const W = 36;
 // x < 23 — операционный департамент и кабинет Мирика, x = 23 — стена с дверью, x > 23 — студия ютуберов
 const STUDIO_X = 24;
 const DOOR_Y = 10;
-export const H = 17;
+export const H = 29;
+// y 16–17 — стена со входами (x=10 из лаунжа, x=30 из студии), y >= 18 — светлый венчурный офис StartupBase
+const VC_WALL = 16;
+const VC_Y = 18;
+const VC_DOORS = [10, 30];
 const WW = W * T;
 const WH = H * T;
 const OUT = '#1b1726';
@@ -37,7 +41,8 @@ for (let x = 0; x < W; x++) { block(x, 0); block(x, 1); block(x, H - 1); }
 for (let y = 0; y < H; y++) { block(0, y); block(W - 1, y); }
 for (let y = 2; y <= 7; y++) block(15, y);              // стекло кабинета (вертикаль)
 for (let x = 16; x < 23; x++) if (x !== 19) block(x, 7); // стекло кабинета (низ), дверь x=19
-for (let y = 2; y < H - 1; y++) if (y !== DOOR_Y) block(23, y); // стена между департаментами, дверь из переговорки
+for (let y = 2; y < VC_WALL; y++) if (y !== DOOR_Y) block(23, y); // стена между департаментами, дверь из переговорки
+for (let x = 1; x < W - 1; x++) if (!VC_DOORS.includes(x)) { block(x, VC_WALL); block(x, VC_WALL + 1); } // стена StartupBase
 
 const furniture = [];
 function add(kind, x, y, w = 1, h = 1, extra = {}) {
@@ -90,6 +95,30 @@ add('plant', 24, 15);
 add('plant', 34, 15, 1, 1, { big: true });
 add('plant', 24, 2, 1, 1, { big: true });
 add('tripod', 33, 9);
+// StartupBase — светлый венчурный офис
+add('rug', 13, 23, 6, 4, { walkable: true, flat: true, vc: true });
+add('stage', 23, 19, 6, 2, { walkable: true, flat: true });
+add('podium', 27, 19);
+add('audience', 23, 22, 6, 1);
+add('audience', 23, 24, 6, 1);
+add('pod', 14, 19, 4, 3);
+add('cowork', 2, 24, 4, 1);
+add('cowork', 7, 24, 4, 1);
+add('sofa', 14, 27, 3, 1, { color: '#5b8def' });
+add('coffeetable', 14, 25, 3, 1);
+add('coffeebar', 30, 27, 4, 1);
+add('booth', 33, 19);
+add('booth', 34, 19);
+add('flipchart', 20, 20);
+add('beanbag', 19, 25, 1, 1, { color: '#ff9f43' });
+add('beanbag', 21, 26, 1, 1, { color: '#1abc9c' });
+add('plant', 1, 18, 1, 1, { big: true });
+add('plant', 13, 18);
+add('plant', 21, 18);
+add('plant', 34, 23, 1, 1, { big: true });
+add('plant', 1, 27);
+add('plant', 20, 27);
+add('plant', 29, 27, 1, 1, { big: true });
 
 // точки интереса: tile — куда идти, dir — куда смотреть, sit — сесть (px)
 const POIS = [
@@ -124,11 +153,24 @@ const POIS = [
   { x: 29, y: 13, dir: 'down', say: '📱 листаю шортсы', who: 'yt' },
   { x: 31, y: 2, dir: 'up', say: '🏆 когда золотая кнопка?', who: 'yt' },
   { x: 21, y: 10, dir: 'right', say: '🚪 к соседям', who: 'yt' },
+  // StartupBase
+  { x: 24, y: 20, dir: 'down', say: '🎤 питчим инвесторам', who: 'vc' },
+  { x: 26, y: 21, dir: 'up', say: '👏 сильный питч', who: 'vc' },
+  { x: 19, y: 21, dir: 'right', say: '📊 рисую воронку', who: 'vc' },
+  { x: 33, y: 21, dir: 'up', say: '📞 созвон с фондом', who: 'vc' },
+  { x: 31, y: 26, dir: 'down', say: '☕ флэт уайт', who: 'all' },
+  { x: 32, y: 26, dir: 'down', say: '🥐 круассан', who: 'all' },
+  { x: 15, y: 26, dir: 'down', say: '🤝 встреча с инвестором', who: 'vc', sit: { x: 15.5 * T, y: 27 * T + 12 } },
+  { x: 16, y: 26, dir: 'down', say: '💼 обсуждаем термшит', who: 'vc', sit: { x: 16.5 * T, y: 27 * T + 12 } },
+  { x: 4, y: 23, dir: 'down', say: '💻 коворкинг', who: 'all' },
+  { x: 9, y: 25, dir: 'up', say: '🧑‍💻 фаундеры пишут', who: 'vc' },
+  { x: 18, y: 22, dir: 'up', say: '🗣 переговорка', who: 'vc' },
+  { x: 10, y: 18, dir: 'up', say: '🚀 Demo Day скоро', who: 'all' },
 ];
-const CAT_SPOTS = [{ x: 12, y: 14 }, { x: 4, y: 12 }, { x: 18, y: 12 }, { x: 9, y: 11 }, { x: 20, y: 8 }, { x: 5, y: 6 }, { x: 29, y: 12 }, { x: 25, y: 11 }, { x: 33, y: 7 }];
+const CAT_SPOTS = [{ x: 15, y: 24 }, { x: 22, y: 23 }, { x: 6, y: 22 }, { x: 12, y: 14 }, { x: 4, y: 12 }, { x: 18, y: 12 }, { x: 9, y: 11 }, { x: 20, y: 8 }, { x: 5, y: 6 }, { x: 29, y: 12 }, { x: 25, y: 11 }, { x: 33, y: 7 }];
 // подписи департаментов (в мировых координатах)
-const DEPT_SIGNS = [{ x: 8 * T, y: 2.1 * T, text: '🏢 Операционный департамент' }, { x: 29.5 * T, y: 2.1 * T, text: '🎬 Департамент ютуберов' }];
-export const AREAS = { ops: { x: 11.5 * T, y: 8.5 * T }, yt: { x: 29.5 * T, y: 8.5 * T } };
+const DEPT_SIGNS = [{ x: 8 * T, y: 2.1 * T, text: '🏢 Операционный департамент' }, { x: 29.5 * T, y: 2.1 * T, text: '🎬 Департамент ютуберов' }, { x: 7 * T, y: 18.15 * T, text: '💼 StartupBase · венчурный офис' }];
+export const AREAS = { ops: { x: 11.5 * T, y: 8.5 * T, w: 24 * T, h: 16 * T }, yt: { x: 29.5 * T, y: 8.5 * T, w: 13 * T, h: 16 * T }, vc: { x: 18 * T, y: 22.5 * T, w: 35 * T, h: 13 * T } };
 
 const free = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !blocked.has(key(x, y));
 function findPath(sx, sy, tx, ty) {
@@ -342,7 +384,7 @@ function drawCat(c, x, y, o) {
 }
 
 // ---------- экраны мониторов ----------
-const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash', vlad: 'trends', arina: 'script', gosha: 'timeline' };
+const SCREEN = { timur: 'code', liza: 'search', borya: 'browser', nika: 'doc', mirik: 'dash', vlad: 'trends', arina: 'script', gosha: 'timeline', artem: 'dash', dina: 'sheet', rustam: 'slides' };
 function drawScreen(c, x, y, w, h, kind, busy, t, seed) {
   if (!kind) { px(c, x, y, w, h, '#0e1018'); px(c, x + 2, y + 2, 4, 1, 'rgba(255,255,255,.08)'); return; }
   if (!busy) {
@@ -390,6 +432,18 @@ function drawScreen(c, x, y, w, h, kind, busy, t, seed) {
     px(c, x + 3, y + 2, 8, 1.4, '#e17055');
     for (let i = 0; i < 4; i++) px(c, x + (i % 2 ? 7 : 3), y + 6 + i * 3, i === 3 ? ((t * 7) % (w - 10)) : w - 10 - (i % 2) * 4, 1, i % 2 ? '#636e72' : '#2d3436');
     px(c, x + w - 6, y + 6, 3, 8, 'rgba(255,200,60,.5)');
+  } else if (kind === 'sheet') {
+    px(c, x, y, w, h, '#ffffff');
+    px(c, x, y, w, 3, '#1abc9c');
+    for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) {
+      px(c, x + 1 + k * (w / 4), y + 4 + r * 3.2, w / 4 - 1, 2.6, r === 0 ? '#d5f5ec' : (r + k + Math.floor(t * 2)) % 7 === 0 ? '#ffeaa7' : '#f1f2f6');
+    }
+  } else if (kind === 'slides') {
+    px(c, x, y, w, h, '#f7f7f2');
+    const n = Math.floor(t / 2.5) % 3;
+    if (n === 0) { px(c, x + 3, y + 3, 12, 2, '#ff9f43'); px(c, x + 3, y + 7, w - 6, 1, '#636e72'); px(c, x + 3, y + 10, w - 10, 1, '#636e72'); }
+    else if (n === 1) { for (let i = 0; i < 4; i++) { const bh = 3 + i * 2.5; px(c, x + 4 + i * 5, y + h - 2 - bh, 3, bh, '#ff9f43'); } }
+    else { c.fillStyle = '#ff9f43'; c.beginPath(); c.arc(x + w / 2, y + h / 2, 5, 0, Math.PI * 1.3); c.lineTo(x + w / 2, y + h / 2); c.fill(); }
   } else if (kind === 'timeline') {
     px(c, x, y, w, h, '#1b1d26');
     px(c, x + 2, y + 2, w - 4, 6, '#2d3142');
@@ -412,8 +466,11 @@ const GLYPHS = {
   vlad: ['📈', '🔥', '👀', '#'],
   arina: ['✍️', '🎬', '💡', '“ ”'],
   gosha: ['🎞', '✂️', '▶', '🎧'],
+  artem: ['📊', '🔍', 'TAM', '📈'],
+  dina: ['💵', '%', 'Σ', 'LTV'],
+  rustam: ['🎤', '🚀', '💼', '🤝'],
 };
-const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80', vlad: '255,80,90', arina: '255,200,60', gosha: '255,140,50' };
+const GLOW = { timur: '80,200,255', liza: '190,120,255', borya: '90,255,150', nika: '255,120,200', mirik: '255,210,80', vlad: '255,80,90', arina: '255,200,60', gosha: '255,140,50', artem: '93,173,226', dina: '46,204,113', rustam: '255,159,67' };
 const EMPTY_DESKS = [{ x: 10, y: 4 }, { x: 10, y: 8 }];
 
 export class Office {
@@ -471,7 +528,7 @@ export class Office {
     // весь офис, если он помещается читаемо (компьютер); иначе (телефон) — крупно операционный отдел
     const narrow = fitBoth < 0.55;
     const z = narrow ? Math.min(this.vh / WH, fitBoth * 1.9) : fitBoth;
-    this.camT = { x: narrow ? 8.5 * T : WW / 2, y: WH / 2, z };
+    this.camT = { x: narrow ? 8.5 * T : WW / 2, y: narrow ? 8.5 * T : WH / 2, z };
     this.follow = null;
     this.userMoved = false;
   }
@@ -663,7 +720,7 @@ export class Office {
       return;
     }
     const taken = new Set([...this.agents.values()].map((x) => x.poi).filter(Boolean));
-    const mine = a.boss ? 'mirik' : a.dept === 'yt' ? 'yt' : 'staff';
+    const mine = a.boss ? 'mirik' : a.dept === 'yt' ? 'yt' : a.dept === 'vc' ? 'vc' : 'staff';
     const pois = POIS.filter((p) => !taken.has(p) && (p.who === 'all' || p.who === mine));
     if (Math.random() < 0.5 && pois.length) {
       const p = pois[Math.floor(Math.random() * pois.length)];
@@ -787,6 +844,17 @@ export class Office {
     const r = rng(42);
     for (let y = 2; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
       const X = x * T, Y = y * T;
+      if (y >= VC_WALL) {
+        if (y < VC_Y && !VC_DOORS.includes(x)) continue; // стена — рисуется ниже
+        // светлый паркет «ёлочкой»: соседние клетки — доски поперёк
+        px(c, X, Y, T, T, '#e8d8bc');
+        for (let i = 0; i < 4; i++) {
+          const col = ((x * 7 + y * 3 + i) % 3) === 0 ? '#e2cfae' : ((x + i) % 2 ? '#ecdec4' : '#e6d5b6');
+          if ((x + y) % 2) px(c, X + i * 8, Y, 8, T, col); else px(c, X, Y + i * 8, T, 8, col);
+          if ((x + y) % 2) px(c, X + i * 8 + 7, Y, 1, T, 'rgba(150,110,60,.18)'); else px(c, X, Y + i * 8 + 7, T, 1, 'rgba(150,110,60,.18)');
+        }
+        continue;
+      }
       const studio = x >= STUDIO_X;
       const office = !studio && x >= 16 && y <= 6;
       const meeting = !studio && x >= 16 && y >= 8 && y <= 11;
@@ -835,8 +903,8 @@ export class Office {
       }
     }
     px(c, STUDIO_X * T, 62, (W - 1 - STUDIO_X) * T, 2, 'rgba(255,0,200,.55)');
-    px(c, 23 * T + 8, 2 * T, 16, (H - 3) * T, '#3d3852');
-    px(c, 23 * T + 8, 2 * T, 2, (H - 3) * T, 'rgba(255,255,255,.12)');
+    px(c, 23 * T + 8, 2 * T, 16, (VC_WALL - 2) * T, '#3d3852');
+    px(c, 23 * T + 8, 2 * T, 2, (VC_WALL - 2) * T, 'rgba(255,255,255,.12)');
     px(c, 23 * T, DOOR_Y * T, T, T, '#3a3449');
     px(c, 23 * T + 4, DOOR_Y * T - 3, T - 8, 3, '#9aa7b8'); px(c, 23 * T + 4, (DOOR_Y + 1) * T, T - 8, 3, '#9aa7b8');
     const g = c.createLinearGradient(0, 64, 0, 78);
@@ -846,6 +914,26 @@ export class Office {
     px(c, 0, 2 * T, T, WH, '#2a2638'); px(c, T - 6, 2 * T, 6, (H - 3) * T, '#3d3852');
     px(c, (W - 1) * T, 2 * T, T, WH, '#2a2638'); px(c, (W - 1) * T, 2 * T, 6, (H - 3) * T, '#3d3852');
     px(c, 0, (H - 1) * T, WW, T, '#2a2638'); px(c, T, (H - 1) * T, WW - 2 * T, 6, '#3d3852');
+    // стена StartupBase (вид спереди): белая, с плинтусом, проёмы-входы
+    for (let x = 1; x < W - 1; x++) {
+      if (VC_DOORS.includes(x)) continue;
+      const X = x * T, Y = VC_WALL * T;
+      px(c, X, Y, T, 6, '#cfcbc2');
+      px(c, X, Y + 6, T, 40, '#f6f5f1');
+      px(c, X, Y + 46, T, 12, '#e4e1d9'); px(c, X, Y + 46, T, 1, 'rgba(0,0,0,.06)');
+      px(c, X, Y + 58, T, 6, '#bdb8ad');
+    }
+    for (const dx of VC_DOORS) {
+      const X = dx * T, Y = VC_WALL * T;
+      px(c, X - 3, Y, 3, 2 * T, '#9aa0ad'); px(c, X + T, Y, 3, 2 * T, '#9aa0ad');
+      px(c, X, Y, T, 4, '#9aa0ad');
+    }
+    const vg = c.createLinearGradient(0, VC_Y * T, 0, VC_Y * T + 14);
+    vg.addColorStop(0, 'rgba(0,0,0,.12)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = vg; c.fillRect(T, VC_Y * T, WW - 2 * T, 14);
+    // окна в правой стене венчурного офиса
+    for (let y = VC_Y; y < H - 1; y += 3) { px(c, (W - 1) * T, y * T + 6, 6, 2 * T - 12, '#9fd3ff'); px(c, (W - 1) * T + 1, y * T + 8, 2, 2 * T - 16, '#e6f6ff'); }
+    for (let y = VC_Y; y < H - 1; y += 3) { px(c, T - 6, y * T + 6, 6, 2 * T - 12, '#9fd3ff'); px(c, T - 4, y * T + 8, 2, 2 * T - 16, '#e6f6ff'); }
     // картины / постеры
     box(c, 13 * T + 34, 10, 22, 28, '#ffffff'); px(c, 13 * T + 37, 13, 16, 16, '#5dade2'); px(c, 13 * T + 40, 20, 10, 6, '#ffd23f'); px(c, 13 * T + 37, 31, 16, 3, '#333');
     box(c, 18 * T + 12, 14, 26, 20, '#e0b04a'); px(c, 18 * T + 15, 17, 20, 14, '#1c2740'); px(c, 18 * T + 19, 21, 12, 2, '#e0b04a'); px(c, 18 * T + 19, 25, 8, 2, '#e0b04a');
@@ -915,9 +1003,45 @@ export class Office {
       c.fillStyle = '#ff0033'; c.beginPath(); c.moveTo(bx + 9, by + 8); c.lineTo(bx + 9, by + 18); c.lineTo(bx + 17, by + 13); c.fill();
       c.font = '700 3.5px Inter, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#fff'; c.fillText(label, bx + 12, by + 27.5);
     });
+    this.drawVcWall(c);
     // табличка
     box(c, 19 * T - 12, 7 * T - 30, 46, 9, '#e0b04a', { outline: '#6b4e1f' });
     c.fillStyle = '#2a2440'; c.font = '700 7px Inter, sans-serif'; c.textAlign = 'center'; c.fillText('BOSS ROOM', 19 * T + 11, 7 * T - 23);
+  }
+
+  // стена StartupBase: вывеска, портфель стартапов, воронка, экран питча, Demo Day
+  drawVcWall(c) {
+    const Y = VC_WALL * T;
+    // вывеска с ракетой
+    box(c, 2 * T + 6, Y + 10, 6 * T - 12, 30, '#ffffff', { outline: '#d8d4ca' });
+    c.font = '900 15px Montserrat, Inter, sans-serif'; c.textAlign = 'left'; c.fillStyle = '#1e272e';
+    c.fillText('Startup', 3 * T + 4, Y + 30); c.fillStyle = '#ff7a2f'; c.fillText('Base', 3 * T + 70, Y + 30);
+    c.font = '18px sans-serif'; c.fillText('🚀', 2 * T + 12, Y + 32 - Math.abs(Math.sin(this.t * 2)) * 3);
+    // портфель: логотипы стартапов
+    box(c, 12 * T - 6, Y + 8, 5 * T, 36, '#ffffff', { outline: '#d8d4ca' });
+    c.font = '700 5px Inter, sans-serif'; c.fillStyle = '#636e72'; c.fillText('PORTFOLIO', 12 * T, Y + 15);
+    ['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#00cec9', '#fab1a0'].forEach((col, i) => {
+      const lx = 12 * T + (i % 4) * 37, ly = Y + 19 + Math.floor(i / 4) * 12;
+      box(c, lx, ly, 30, 9, col, { outline: 'rgba(0,0,0,.08)' }); px(c, lx + 3, ly + 3, 12, 3, 'rgba(255,255,255,.75)');
+    });
+    // воронка сделок на доске
+    box(c, 18 * T, Y + 8, 3 * T + 8, 38, '#fbfbf8', { outline: '#b9b4a8' });
+    [[90, '#74b9ff'], [64, '#55efc4'], [40, '#ffeaa7'], [18, '#ff7675']].forEach(([wd, col], i) => px(c, 18 * T + 52 - wd / 2, Y + 13 + i * 7, wd, 5, col));
+    c.font = '700 4.5px Inter, sans-serif'; c.fillStyle = '#2d3436'; c.textAlign = 'left'; c.fillText('DEAL FLOW', 18 * T + 4, Y + 44);
+    // большой экран над сценой — слайды питча
+    const sx = 23 * T + 8, sw = 6 * T - 16;
+    box(c, sx, Y + 4, sw, 46, '#1e272e');
+    px(c, sx + 3, Y + 7, sw - 6, 40, '#ffffff');
+    const slide = Math.floor(this.t / 3) % 4;
+    c.textAlign = 'left';
+    if (slide === 0) { c.font = '900 12px Montserrat, Inter, sans-serif'; c.fillStyle = '#ff7a2f'; c.fillText('Seed $500K', sx + 12, Y + 25); c.font = '600 6px Inter, sans-serif'; c.fillStyle = '#636e72'; c.fillText('Use of funds: product · growth · team', sx + 12, Y + 38); }
+    else if (slide === 1) { for (let i = 0; i < 6; i++) { const bh = 5 + i * 5; px(c, sx + 14 + i * 22, Y + 44 - bh, 14, bh, i === 5 ? '#ff7a2f' : '#74b9ff'); } c.font = '700 6px Inter, sans-serif'; c.fillStyle = '#2d3436'; c.fillText('MRR +38% MoM', sx + 12, Y + 16); }
+    else if (slide === 2) { c.font = '700 7px Inter, sans-serif'; c.fillStyle = '#2d3436'; c.fillText('TAM  $4.2B', sx + 14, Y + 20); c.fillText('SAM  $610M', sx + 14, Y + 30); c.fillText('SOM  $38M', sx + 14, Y + 40); [[26, '#dfe6e9'], [17, '#74b9ff'], [8, '#ff7a2f']].forEach(([r, col]) => ellipse(c, sx + sw - 40, Y + 27, r * 0.8, r * 0.8, col)); }
+    else { c.font = '900 13px Montserrat, Inter, sans-serif'; c.fillStyle = '#2d3436'; c.fillText('Problem → Solution', sx + 12, Y + 25); c.font = '600 6px Inter, sans-serif'; c.fillStyle = '#ff7a2f'; c.fillText('farmers lose 30% of harvest', sx + 12, Y + 38); }
+    // Demo Day
+    box(c, 31 * T + 4, Y + 10, 3 * T + 18, 30, '#ff7a2f', { outline: '#c45c1f' });
+    c.font = '900 10px Montserrat, Inter, sans-serif'; c.fillStyle = '#ffffff'; c.textAlign = 'center'; c.fillText('DEMO DAY', 32.7 * T + 14, Y + 24);
+    c.font = '700 5px Inter, sans-serif'; c.fillText('applications open', 32.7 * T + 14, Y + 34);
   }
 
   drawSunbeams(c, day) {
@@ -1015,6 +1139,8 @@ export class Office {
     for (const a of this.agents.values()) if (a.busy && a.sittingAt === a.seat) light(a.seat.x, a.seat.y - 30, 50, 0.8);
     light(19 * T, 9.5 * T, 90, 0.6);
     light(26 * T, 1.2 * T, 110, 0.75); // неон
+    // StartupBase — потолочные светильники: светло в любое время
+    for (const ly of [19.5, 23, 26.5]) for (const lx of [3, 8.5, 14, 19.5, 25, 30.5]) light(lx * T, ly * T, 150, 0.95);
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.drawImage(L, 0, 0);
     // тёплые блики
@@ -1057,6 +1183,11 @@ export class Office {
     const shadow = (dx = 0) => { c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(X + 3 + dx, Y + h - 3, w - 2, 5); };
     switch (f.kind) {
       case 'rug':
+        if (f.vc) {
+          box(c, X + 6, Y + 4, w - 12, h - 8, '#dfe6e9', { outline: '#c8d0d4' });
+          c.strokeStyle = '#1abc9c'; c.lineWidth = 2; c.strokeRect(X + 12, Y + 10, w - 24, h - 20);
+          break;
+        }
         if (f.studio) {
           box(c, X + 4, Y + 4, w - 8, h - 8, '#191a24', { outline: '#0c0d13' });
           c.strokeStyle = 'rgba(0,229,255,.55)'; c.lineWidth = 2; c.strokeRect(X + 10, Y + 10, w - 20, h - 20);
@@ -1164,12 +1295,13 @@ export class Office {
         box(c, X + 16, Y + 10, 8, 6, '#ffffff'); box(c, X + 40, Y + 11, 16, 5, '#5dade2'); box(c, X + 66, Y + 9, 10, 8, '#e74c3c');
         break;
       case 'sofa':
+        const sc = f.color || '#c0504d';
         if (part === 'back') {
-          box(c, X, Y - 10, w, 18, '#c0504d', { hi: '#d9625e' });
-          for (let i = 1; i < f.w; i++) px(c, X + i * T, Y - 8, 1, 14, '#9e3f3c');
+          box(c, X, Y - 10, w, 18, sc, { hi: shade(sc, 0.15) });
+          for (let i = 1; i < f.w; i++) px(c, X + i * T, Y - 8, 1, 14, shade(sc, -0.2));
         } else {
-          box(c, X, Y + 6, w, 16, '#d9625e', { lo: '#a5403d' });
-          box(c, X - 4, Y - 4, 8, 26, '#a5403d'); box(c, X + w - 4, Y - 4, 8, 26, '#a5403d');
+          box(c, X, Y + 6, w, 16, shade(sc, 0.1), { lo: shade(sc, -0.2) });
+          box(c, X - 4, Y - 4, 8, 26, shade(sc, -0.2)); box(c, X + w - 4, Y - 4, 8, 26, shade(sc, -0.2));
           box(c, X + 10, Y - 4, 12, 8, '#ffd23f');
         }
         break;
@@ -1296,6 +1428,69 @@ export class Office {
         for (let i = 0; i < 2; i++) for (let j = 0; j < 4; j++) px(c, X + 9 + j * 4, Y - 3 + i * 10, 3, 7, ['#00e676', '#ff1744', '#2979ff', '#ffd600'][(i + j) % 4]);
         px(c, X + 22, Y - 2, 2, 10, '#9aa0ad');
         break;
+      case 'stage': {
+        box(c, X + 2, Y + 4, w - 4, h - 8, '#3d4451', { hi: '#525a6a' });
+        px(c, X + 2, Y + h - 6, w - 4, 4, '#2b313b');
+        px(c, X + 6, Y + 8, w - 12, 1, 'rgba(255,255,255,.12)');
+        for (let i = 0; i < 6; i++) ellipse(c, X + 14 + i * 32, Y + h - 5, 2, 1.5, Math.sin(this.t * 2 + i) > 0 ? '#ffd23f' : '#a4b0be');
+        break;
+      }
+      case 'podium':
+        shadow();
+        box(c, X + 8, Y - 6, 16, 30, '#ffffff', { hi: '#ffffff', lo: '#dfe4ea' });
+        px(c, X + 10, Y + 4, 12, 4, '#ff7a2f');
+        px(c, X + 15, Y - 14, 2, 9, '#2f3542'); ellipse(c, X + 16, Y - 15, 3, 2, '#2f3542');
+        break;
+      case 'audience':
+        for (let i = 0; i < f.w; i++) {
+          const cx = X + i * T + 16;
+          ellipse(c, cx, Y + 26, 9, 3, 'rgba(0,0,0,.15)');
+          box(c, cx - 9, Y + 4, 18, 8, '#ff7a2f', { hi: '#ff9f5a' });
+          box(c, cx - 8, Y + 12, 16, 10, '#ffa36b');
+          px(c, cx - 7, Y + 22, 2, 6, '#636e72'); px(c, cx + 5, Y + 22, 2, 6, '#636e72');
+        }
+        break;
+      case 'pod': {
+        ellipse(c, X + w / 2, Y + h, w / 2, 8, 'rgba(0,0,0,.12)');
+        px(c, X + 4, Y + 2, w - 8, h - 6, 'rgba(200,232,255,.35)');
+        c.strokeStyle = '#a4b0be'; c.lineWidth = 2; c.strokeRect(X + 4, Y + 2, w - 8, h - 6);
+        px(c, X + 4, Y + 2, w - 8, 3, '#dfe6e9');
+        box(c, X + w / 2 - 34, Y + h / 2 - 12, 68, 22, '#ffffff', { outline: '#ced6e0' });
+        for (let i = 0; i < 3; i++) { box(c, X + w / 2 - 30 + i * 24, Y + h / 2 - 22, 12, 8, '#2f3542'); box(c, X + w / 2 - 30 + i * 24, Y + h / 2 + 14, 12, 8, '#2f3542'); }
+        box(c, X + w / 2 - 10, Y + h / 2 - 7, 20, 12, '#2f3542'); drawScreen(c, X + w / 2 - 8, Y + h / 2 - 5, 16, 8, 'slides', true, this.t, 4);
+        c.font = '700 6px Inter, sans-serif'; c.fillStyle = '#57606f'; c.textAlign = 'left'; c.fillText('MEETING ROOM', X + 10, Y + 12);
+        break;
+      }
+      case 'cowork':
+        ellipse(c, X + w / 2, Y + h + 2, w / 2, 5, 'rgba(0,0,0,.12)');
+        for (let i = 0; i < f.w; i++) { box(c, X + i * T + 8, Y - 10, 16, 8, '#57606f'); box(c, X + i * T + 8, Y + h + 2, 16, 8, '#57606f'); }
+        box(c, X, Y + 2, w, h - 4, '#ffffff', { hi: '#ffffff', lo: '#dfe4ea' });
+        for (let i = 0; i < f.w; i++) {
+          box(c, X + i * T + 7, Y + 6, 18, 12, '#ced6e0'); px(c, X + i * T + 9, Y + 8, 14, 8, ['#74b9ff', '#55efc4', '#ffeaa7', '#fd79a8'][(i + f.x) % 4]);
+          if (i % 2) box(c, X + i * T + 26, Y + 8, 4, 5, '#ff7a2f');
+        }
+        break;
+      case 'coffeebar':
+        box(c, X, Y + 4, w, h - 2, '#ffffff', { lo: '#dfe4ea' });
+        px(c, X - 1, Y - 1, w + 2, 9, '#b9b4a8'); px(c, X, Y, w, 7, '#8d6e63');
+        box(c, X + 10, Y - 20, 22, 22, '#2f3542', { hi: '#57606f' }); px(c, X + 14, Y - 15, 4, 3, '#2ecc71'); box(c, X + 17, Y - 3, 7, 6, '#ffffff');
+        for (let i = 0; i < 2; i++) px(c, X + 19 + i * 2, Y - 26 - ((this.t * 10 + i * 5) % 9), 1, 4, 'rgba(120,120,120,.4)');
+        box(c, X + 48, Y - 8, 26, 10, '#ffffff', { outline: '#ced6e0' }); ellipse(c, X + 55, Y - 4, 4, 3, '#e1b382'); ellipse(c, X + 66, Y - 4, 4, 3, '#e1b382');
+        box(c, X + 86, Y - 14, 12, 16, '#55efc4'); box(c, X + 102, Y - 12, 10, 14, '#ffeaa7');
+        break;
+      case 'booth':
+        shadow();
+        box(c, X + 3, Y - 30, 26, 58, '#ffffff', { hi: '#ffffff', lo: '#dfe4ea' });
+        px(c, X + 6, Y - 26, 20, 36, 'rgba(160,210,255,.55)'); px(c, X + 8, Y - 24, 3, 30, 'rgba(255,255,255,.7)');
+        px(c, X + 12, Y - 6, 8, 2, '#2f3542');
+        c.font = '6px sans-serif'; c.textAlign = 'center'; c.fillText('📞', X + 16, Y + 22);
+        break;
+      case 'flipchart':
+        ellipse(c, X + 16, Y + 28, 10, 3, 'rgba(0,0,0,.15)');
+        px(c, X + 8, Y + 10, 2, 18, '#636e72'); px(c, X + 22, Y + 10, 2, 18, '#636e72');
+        box(c, X + 4, Y - 18, 24, 30, '#ffffff', { outline: '#a4b0be' });
+        [[18, '#74b9ff'], [12, '#55efc4'], [6, '#ff7675']].forEach(([wd, col], i) => px(c, X + 16 - wd / 2, Y - 13 + i * 6, wd, 4, col));
+        break;
       case 'bistro':
         ellipse(c, X + 16, Y + 28, 13, 4, 'rgba(0,0,0,.2)');
         px(c, X + 14, Y + 12, 4, 16, '#555');
@@ -1372,8 +1567,7 @@ export class Office {
   goToArea(name) {
     const a = AREAS[name];
     if (!a) return;
-    const width = name === 'yt' ? 13 * T : 24 * T;
-    this.camT = { x: a.x, y: a.y, z: Math.max(this.minZ, Math.min(this.maxZ, Math.min(this.vw / width, this.vh / WH) * 0.98)) };
+    this.camT = { x: a.x, y: a.y, z: Math.max(this.minZ, Math.min(this.maxZ, Math.min(this.vw / a.w, this.vh / a.h) * 0.98)) };
     this.follow = null;
     this.userMoved = true;
   }

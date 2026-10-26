@@ -204,6 +204,7 @@ function activityLabel(name, args) {
     case 'browser_download': return 'скачивает файл';
     case 'read_document': return `читает ${short(args.path)}`;
     case 'make_document': return `оформляет ${short(args.path)}`;
+    case 'html_to_pdf': return `собирает PDF ${short(args.out)}`;
     case 'build_video': return args.quality === 'draft' ? 'собирает черновик ролика' : 'монтирует ролик';
     case 'render_video': return 'рендерит свой монтаж';
     case 'render_image': return 'делает обложку';

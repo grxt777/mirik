@@ -1,5 +1,6 @@
 // Браузерный агент: Playwright Chromium. Один браузер, одна вкладка на задачу.
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { getSecret, secretNames } from '../secrets.js';
@@ -77,6 +78,20 @@ export async function newRenderPage(width, height) {
   const browser = await getBrowser();
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
   return context.newPage();
+}
+
+// PDF из HTML-файла рабочей папки (питч-деки: страница 1920x1080; документы: A4)
+export async function pdfFromFile(htmlFull, out, format = 'a4') {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.goto(pathToFileURL(htmlFull).href, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.evaluate(() => document.fonts.ready);
+    const size = format === 'slides' ? { width: '1920px', height: '1080px', margin: { top: 0, bottom: 0, left: 0, right: 0 } } : { format: 'A4', margin: { top: '18mm', bottom: '18mm', left: '20mm', right: '16mm' } };
+    await page.pdf({ path: out, printBackground: true, preferCSSPageSize: false, ...size });
+  } finally {
+    await page.close();
+  }
 }
 
 // PDF из HTML (для make_document) — тем же Chromium
