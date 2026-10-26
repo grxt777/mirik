@@ -6,7 +6,7 @@ tg?.ready();
 tg?.expand();
 
 const COLORS = { agritech: 'green', fintech: 'blue', foodtech: 'orange', edtech: 'purple', healthtech: 'red', ecommerce: 'pink', logistics: 'brown', mobility: 'yellow', proptech: 'brown', cleantech: 'green', hrtech: 'gray', traveltech: 'blue', media: 'purple', saas: 'gray', ai: 'purple', govtech: 'gray', other: 'gray' };
-const COUNCIL = [['artem', 'Артём', '🔍'], ['dina', 'Дина', '💵'], ['kamila', 'Камила', '🛒'], ['bakhtiyor', 'Бахтиёр', '💰']];
+const COUNCIL = [['artem', 'Артём', '🔍'], ['dina', 'Дина', '💵'], ['kamila', 'Камила', '🛒'], ['sanjar', 'Санжар', '⚖️'], ['bakhtiyor', 'Бахтиёр', '💰']];
 const state = { data: null, facts: null, view: 'table', sector: null, q: '', sort: 'updated' };
 let token = null;
 try { token = localStorage.getItem('mirik_token'); } catch {}

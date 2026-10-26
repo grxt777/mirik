@@ -1,4 +1,8 @@
 // Поиск в интернете и чтение страниц.
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { wsPath } from './files.js';
+
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
 
 const decode = (s) =>
@@ -15,6 +19,10 @@ export function htmlToText(html) {
     .replace(/\n\s*\n+/g, '\n')
     .trim();
 }
+
+// PDF/DOCX/XLSX/PPTX по ссылке — не текст: сохраняем в downloads/web/ и отдаём путь для read_document
+const DOC_TYPES = /pdf|msword|officedocument|ms-excel|ms-powerpoint/;
+const DOC_EXT = /\.(pdf|docx?|xlsx?|pptx?)$/i;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -89,11 +97,22 @@ export const webTools = [
   },
   {
     name: 'fetch_url',
-    description: 'Скачать страницу по URL и вернуть её текст (для статей, документации, API).',
+    description: 'Скачать страницу по URL и вернуть её текст (для статей, документации, API). PDF/DOCX/XLSX/PPTX сохраняет в downloads/web/ — их читай read_document.',
     parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
     async run({ url }) {
       const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
       const type = res.headers.get('content-type') || '';
+      const name = decodeURIComponent(new URL(res.url || url).pathname.split('/').pop() || '');
+      if (DOC_TYPES.test(type) || DOC_EXT.test(name)) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 50 * 1048576) return 'Документ больше 50 МБ — не скачиваю';
+        const ext = DOC_EXT.test(name) ? '' : '.' + ((type.match(/pdf|msword|excel|powerpoint/) || ['pdf'])[0].replace('msword', 'doc').replace('excel', 'xls').replace('powerpoint', 'ppt'));
+        const file = path.join('downloads/web', (name.replace(/[^\w.\-а-яё]+/gi, '_').slice(-80) || 'document') + ext);
+        const full = wsPath(file);
+        await fs.mkdir(path.dirname(full), { recursive: true });
+        await fs.writeFile(full, buf);
+        return `HTTP ${res.status}\nЭто документ (${type.split(';')[0] || 'файл'}, ${(buf.length / 1024).toFixed(0)} КБ), сохранён в ${file} — прочитай его через read_document.`;
+      }
       const body = await res.text();
       const text = type.includes('html') ? htmlToText(body) : body;
       return `HTTP ${res.status}\n` + (text.length > 6000 ? text.slice(0, 6000) + '\n…[страница длиннее — обрезано]' : text);

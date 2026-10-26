@@ -128,7 +128,6 @@ function handle(e) {
       break;
     }
     case 'delegate': office.delegate(e.from, e.to, e.text); break;
-    case 'render': office.setRender(e); break;
     case 'report': office.report(e.from); break;
     case 'log': addLog(e.entry); break;
   }

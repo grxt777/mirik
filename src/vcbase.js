@@ -158,7 +158,7 @@ export function lookup(text, { sector, k = 8 } = {}) {
   return { ideas, facts };
 }
 
-const NAMES = { artem: 'Артём', dina: 'Дина', kamila: 'Камила', bakhtiyor: 'Бахтиёр' };
+const NAMES = { artem: 'Артём', dina: 'Дина', kamila: 'Камила', sanjar: 'Санжар', bakhtiyor: 'Бахтиёр' };
 export function formatLookup({ ideas, facts }) {
   const out = [];
   if (ideas.length) {
