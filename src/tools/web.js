@@ -26,6 +26,28 @@ const DOC_EXT = /\.(pdf|docx?|xlsx?|pptx?)$/i;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Длинная страница + focus: только абзацы, где больше всего слов из focus (в исходном порядке).
+// Меню, футеры и чужие статьи не попадают в контекст — меньше токенов, больше нужного.
+function focusText(text, focus, limit = 4500) {
+  const words = [...new Set(focus.toLowerCase().split(/[^\p{L}\p{N}$%]+/u).filter((w) => w.length > 2))].map((w) => w.slice(0, Math.max(4, w.length - 2)));
+  const paras = text.split('\n').map((p) => p.trim()).filter((p) => p.length > 30);
+  if (!words.length || !paras.length) return null;
+  const scored = paras.map((p, i) => {
+    const low = p.toLowerCase();
+    const hits = words.reduce((n, w) => n + (low.includes(w) ? 1 : 0), 0);
+    return { i, p, score: hits + (hits && /\d/.test(p) ? 0.5 : 0) }; // абзацы с цифрами ценнее
+  });
+  const picked = [];
+  let size = 0;
+  for (const s of scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score)) {
+    if (size + s.p.length > limit) continue;
+    picked.push(s);
+    size += s.p.length;
+  }
+  if (!picked.length) return null;
+  return picked.sort((a, b) => a.i - b.i).map((s) => s.p.slice(0, 1500)).join('\n');
+}
+
 // DuckDuckGo режет серию запросов капчей — ходим к нему по одному, с паузой
 let ddgQueue = Promise.resolve();
 let ddgLast = 0;
@@ -97,9 +119,16 @@ export const webTools = [
   },
   {
     name: 'fetch_url',
-    description: 'Скачать страницу по URL и вернуть её текст (для статей, документации, API). PDF/DOCX/XLSX/PPTX сохраняет в downloads/web/ — их читай read_document.',
-    parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
-    async run({ url }) {
+    description: 'Скачать страницу по URL и вернуть её текст (для статей, документации, API). PDF/DOCX/XLSX/PPTX сохраняет в downloads/web/ — их читай read_document. Укажи focus — и с длинной страницы вернутся только абзацы по теме.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        focus: { type: 'string', description: 'Что ищешь на странице, ключевыми словами (например: «объём рынка Узбекистан 2025 млрд»)' },
+      },
+      required: ['url'],
+    },
+    async run({ url, focus }) {
       const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
       const type = res.headers.get('content-type') || '';
       const name = decodeURIComponent(new URL(res.url || url).pathname.split('/').pop() || '');
@@ -115,6 +144,8 @@ export const webTools = [
       }
       const body = await res.text();
       const text = type.includes('html') ? htmlToText(body) : body;
+      const focused = focus && text.length > 4500 && focusText(text, focus);
+      if (focused) return `HTTP ${res.status}\n[только абзацы по теме «${focus}» из ${text.length} симв.]\n` + focused;
       return `HTTP ${res.status}\n` + (text.length > 6000 ? text.slice(0, 6000) + '\n…[страница длиннее — обрезано]' : text);
     },
   },

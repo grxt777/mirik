@@ -22,7 +22,12 @@ const TASK_TOKEN_BUDGET = 500_000;
 // IT-проект — целая команда (план, дизайн, бэк в паре, фронт, тест и правки): ему лимит больше, ~$0.08
 const IT_TOKEN_BUDGET = 2_000_000;
 // Сколько последних результатов инструментов держать целиком; более старые сжимаются
-const KEEP_FULL_RESULTS = 2;
+const KEEP_FULL_RESULTS = 3;
+// Масштаб поручения (его выбирает тот, кто поручает): множитель шагов сотрудника.
+// quick — пересчёт/уточнение одного аспекта, normal — обычная задача, deep — глубокий разбор
+const SCOPE_STEPS = { quick: 0.6, normal: 1, deep: 1.6 };
+// Даже с «продлевать без вопросов» задача не тратит больше этого (~$0.8) — защита от бесконечного цикла
+const TASK_TOKEN_HARD_CAP = 20_000_000;
 
 // Задачи, прерванные перезапуском сервера, не должны висеть «в работе»
 for (const t of store.tasks) if (t.status === 'running' || t.status === 'queued' || t.status === 'paused') {
@@ -136,6 +141,57 @@ async function waitIfPaused(ctx, agentId) {
   setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
 }
 
+// ---------- вопросы владельцу и продление лимитов ----------
+// Вопросы идут по одному: новый вопрос в чате закрывает предыдущий, а сотрудники работают параллельно
+function askSerial(ctx, q) {
+  const run = (ctx.control.askChain || Promise.resolve()).then(() => ctx.ask(q));
+  ctx.control.askChain = run.catch(() => {});
+  return run;
+}
+
+const EXTEND = '➕ Продлить', EXTEND_ALL = '♾ Продлевать без вопросов';
+const fmtTokens = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace('.0', '') + ' млн' : Math.round(n / 1e3) + ' тыс.');
+
+// Упёрлись в лимит: спрашиваем владельца в Telegram. Нет чата (задача из панели), «хватит» или молчание 30 мин — итог по сделанному
+async function askExtend(ctx, agentId, what) {
+  const c = ctx.control;
+  if (c.autoExtend) return true;
+  if (!ctx.ask || c.cancelled) return false;
+  setState(agentId, { status: 'waiting', activity: 'ждёт решения по лимиту', taskId: ctx.taskId });
+  taskStep(ctx.task, agentId, '⏳ ' + what);
+  const from = Date.now();
+  const answer = await askSerial(ctx, {
+    title: '⏳ Упёрлись в лимит',
+    question: `${what}\nПродлить и работать дальше?`,
+    options: [EXTEND, EXTEND_ALL],
+    skipLabel: '⏹ Хватит — подвести итог',
+    skipNote: '⏹ Подводим итог по сделанному',
+    timeoutNote: '⌛ Без ответа — подводим итог по сделанному',
+    timeoutMs: 30 * 60_000,
+    cancelled: () => c.cancelled,
+  });
+  ctx.task.waitMs = (ctx.task.waitMs || 0) + Date.now() - from;
+  if (answer === EXTEND_ALL) c.autoExtend = true;
+  const yes = c.autoExtend || answer === EXTEND || /^(да|ок|ага|давай|продл|\+|yes)/i.test(String(answer || '').trim());
+  taskStep(ctx.task, agentId, yes ? '➕ лимит продлён' : '⏹ подводим итог');
+  setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
+  return yes;
+}
+
+// Лимит токенов общий на задачу: параллельные сотрудники ждут один и тот же ответ, после «хватит» больше не спрашиваем
+function extendTokens(ctx, agentId) {
+  const c = ctx.control;
+  if (c.tokensRefused || c.tokens >= TASK_TOKEN_HARD_CAP) return Promise.resolve(false);
+  c.tokenAsk ||= (async () => {
+    const step = c.limitStep ||= c.limit || TASK_TOKEN_BUDGET;
+    const ok = await askExtend(ctx, agentId, `Задача потратила ${fmtTokens(c.tokens)} токенов — это лимит на одну задачу. Продление — ещё ${fmtTokens(step)}.`);
+    if (ok) c.limit = Math.min(TASK_TOKEN_HARD_CAP, Math.max(c.limit || TASK_TOKEN_BUDGET, c.tokens) + step);
+    else c.tokensRefused = true;
+    return ok;
+  })().finally(() => { c.tokenAsk = null; });
+  return c.tokenAsk;
+}
+
 // «Сейчас соберу раскадровку…» вместо работы: модель описала план и закончила ход без инструментов
 const INTENT = /(^|\s)(собираю|начинаю|приступаю|займусь|запускаю|перехожу|пишу|делаю|готовлю|сейчас\s+(сделаю|соберу|напишу|займусь|подготовлю|проверю)|далее\s+(сделаю|соберу))/i;
 const DONE_MARK = /(готово|сохранил|записал|отправил|создал|собрал|результат|итог|projects\/|\.(md|json|mp4|png|docx|pdf|py)\b)/i;
@@ -151,10 +207,11 @@ const builtinTools = [
       properties: {
         agent: { type: 'string', enum: AGENT_LIST.filter((a) => a.id !== 'mirik').map((a) => a.id) },
         task: { type: 'string', description: 'Подробное задание со всем нужным контекстом' },
+        scope: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Масштаб: quick — пересчёт/уточнение одного аспекта, normal — обычная задача (по умолчанию), deep — владелец просит глубоко/подробно или решение на реальные деньги' },
       },
       required: ['agent', 'task'],
     },
-    async run({ agent, task }, ctx) {
+    async run({ agent, task, scope }, ctx) {
       if (!AGENTS[agent] || agent === 'mirik') return 'Нет такого сотрудника';
       const team = AGENTS[ctx.agentId]?.team;
       if (team && !team.includes(agent)) return `Поручать можно только своей команде: ${team.join(', ')}`;
@@ -162,7 +219,8 @@ const builtinTools = [
       if (AGENTS[agent].dept === 'it') ctx.control.limit = Math.max(ctx.control.limit || 0, IT_TOKEN_BUDGET);
       bus.emit('event', { type: 'delegate', from: ctx.agentId, to: agent, text: task.slice(0, 120) });
       log(ctx.agentId, `→ ${AGENTS[agent].name}: ${task}`, 'delegate');
-      const report = await runAgent({ agentId: agent, input: task, ctx: { ...ctx, depth: ctx.depth + 1, delegated: true } });
+      const sc = SCOPE_STEPS[scope] ? scope : ctx.scope || 'normal';
+      const report = await runAgent({ agentId: agent, input: task, ctx: { ...ctx, depth: ctx.depth + 1, delegated: true, scope: sc } });
       bus.emit('event', { type: 'report', from: agent, to: ctx.agentId });
       return `Отчёт от ${AGENTS[agent].name}:\n${report}`;
     },
@@ -271,7 +329,7 @@ const builtinTools = [
         setState(ctx.agentId, { status: 'waiting', activity: 'ждёт ответа владельца', taskId: ctx.taskId });
         taskStep(ctx.task, ctx.agentId, '❓ ' + q.question);
         const waitFrom = Date.now();
-        const answer = await ctx.ask({ question: q.question, options: q.options || [], n: i + 1, total: list.length, cancelled: () => ctx.control.cancelled });
+        const answer = await askSerial(ctx, { question: q.question, options: q.options || [], n: i + 1, total: list.length, cancelled: () => ctx.control.cancelled });
         ctx.task.waitMs = (ctx.task.waitMs || 0) + Date.now() - waitFrom;
         if (ctx.control.cancelled) throw new Error('Задача отменена');
         const a = answer ? scrub(answer) : null;
@@ -368,14 +426,22 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
     if (only) sc.function.parameters = { ...sc.function.parameters, properties: { ...sc.function.parameters.properties, agent: { type: 'string', enum: only } } };
     return sc;
   });
-  const maxSteps = agent.maxSteps || (agentId === 'mirik' ? 15 : 20);
+  const baseSteps = agent.maxSteps || (agentId === 'mirik' ? 18 : 20);
+  const scope = ctx.delegated ? ctx.scope || 'normal' : 'normal';
+  const maxSteps = Math.max(4, Math.round(baseSteps * SCOPE_STEPS[scope]));
   let extra = agentId === 'mirik' ? mirikContext(ctx, input) : '';
   // венчурщики начинают с энциклопедии StartupBase: что уже известно по теме — не ищут заново
   if (agent.dept === 'vc') {
     const base = vcFormat(vcLookup(typeof input === 'string' ? input : '', { k: 10 }));
     extra += '\n\nИЗ ЭНЦИКЛОПЕДИИ STARTUPBASE (уже проверено командой раньше — используй и ссылайся, ищи в интернете только недостающее):\n' + (base || 'по этой теме в базе пока пусто');
   }
-  const system = `${agent.prompt}${extra}\n\nСейчас: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}. Рабочая папка общая для всей команды. Экономь токены: не перечитывай одно и то же, не повторяй шаги.`;
+  if (ctx.delegated) extra += `\n\nБюджет: ${maxSteps} шагов (масштаб задачи: ${scope}). Шаг — один твой ответ; несколько инструментов в одном ответе выполняются параллельно и стоят как один шаг. Последние 2 шага оставь на запись результата и отчёт.`;
+  const system = `${agent.prompt}${extra}\n\nСейчас: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent' })}. Рабочая папка общая для всей команды.
+Экономия (качество не урезай — урезай лишнее):
+- независимые поиски, чтения страниц и файлов вызывай пачкой в одном ответе — параллельно;
+- старые результаты инструментов потом сжимаются: нужные цифры и факты из прочитанного сразу коротко выписывай в текст ответа (факт — источник, дата);
+- у fetch_url указывай focus — что ищешь на странице, тогда вернутся только нужные куски;
+- не перечитывай и не повторяй; данных хватает для сильного вывода — останавливайся, не добивай бюджет.`;
   const messages = [{ role: 'system', content: system }, ...history, { role: 'user', content: input }];
   const budget = (ctx.control ||= {});
   budget.tokens ||= 0;
@@ -386,17 +452,26 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
   const actx = { ...ctx, agentId, node, delegated: false };
 
   setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
-  let nudges = 0, lastKey = '', repeats = 0;
+  let nudges = 0, lastKey = '', repeats = 0, limit = maxSteps;
   try {
-    for (let step = 0; step < maxSteps; step++) {
+    for (let step = 0; ; step++) {
+      // шаги кончились — спрашиваем владельца, продлить ли (крупная задача может идти часами)
+      if (step >= limit) {
+        const who = AGENTS[agentId];
+        if (!(await askExtend(actx, agentId, `Лимит шагов исчерпан: ${who.emoji} ${who.name} (${who.role.toLowerCase()}) сделал(а) ${limit} шагов. Продление — ещё ${maxSteps}.`))) break;
+        limit += maxSteps;
+        messages.push({ role: 'user', content: `Владелец продлил лимит: ещё ${maxSteps} шагов. Продолжай работу с того места, где остановился.` });
+      }
       node.step = step;
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
       await waitIfPaused(ctx, agentId);
       if (ctx.control?.cancelled) throw new Error('Задача отменена');
       compact(messages);
-      const over = budget.tokens > (budget.limit || TASK_TOKEN_BUDGET);
+      let over = budget.tokens > (budget.limit || TASK_TOKEN_BUDGET);
+      if (over && (await extendTokens(actx, agentId))) over = false;
+      if (ctx.control?.cancelled) throw new Error('Задача отменена');
       if (over) messages.push({ role: 'user', content: 'Лимит токенов на задачу исчерпан. Больше никаких инструментов — сразу дай итоговый отчёт по тому, что уже сделано.' });
-      const msg = await chat({ messages, tools: over ? [] : schemas, agent: agentId });
+      const msg = await chat({ messages, tools: over ? [] : schemas, agent: agentId, reasoning: agent.reasoning });
       budget.tokens += msg._usage?.total_tokens || 0;
       const calls = msg.tool_calls || [];
       if (!calls.length) {
@@ -406,7 +481,7 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
           : looksLikeIntent(text) ? 'Ты описал, что собираешься сделать, но не сделал. Выполни это прямо сейчас инструментами (без «сейчас соберу/начинаю»), и только потом дай отчёт с результатом.'
           : agent.dept === 'vc' && !actx.opinionSaved && /projects\/vc\//.test(String(input)) ? 'Ты не сохранил своё мнение в файл projects/vc/<имя>/opinions/' + agentId + '.md (папку назвали в задании). Сохрани его сейчас через write_file — с «Оценка: X/10» и «Вердикт:» — и потом дай отчёт.'
           : null;
-        if (why && nudges < 2 && step < maxSteps - 1 && !over) {
+        if (why && nudges < 2 && step < limit - 1 && !over) {
           nudges++;
           messages.push({ role: 'assistant', content: text || '…' });
           messages.push({ role: 'user', content: why });
@@ -473,8 +548,11 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
     }
     // лимит шагов: не обрываемся на полуслове, а просим честный итог без инструментов
     messages.push({ role: 'user', content: 'Лимит шагов исчерпан. Без инструментов коротко: что сделано (с путями файлов), что не успел и что предлагаешь сделать дальше.' });
-    const fin = await chat({ messages, tools: [], agent: agentId, maxTokens: 800 }).catch(() => null);
-    const text = (fin?.content || '').trim() || 'Не уложился в лимит шагов — работа прервана.';
+    const fin = await chat({ messages, tools: [], agent: agentId }).catch(() => null);
+    // итог не получился — отдаём хотя бы собранные отчёты сотрудников, а не пустоту
+    const reports = messages.filter((m) => m.role === 'tool' && /^Отчёт от /.test(m.content)).map((m) => m.content.slice(0, 2500));
+    const text = (fin?.content || '').trim()
+      || (reports.length ? 'Не уложился в лимит шагов — итог не собран. Что успели:\n\n' + reports.join('\n\n') : 'Не уложился в лимит шагов — работа прервана.');
     taskStep(ctx.task, agentId, '⏹ ' + text);
     return text;
   } finally {
@@ -533,7 +611,6 @@ export async function talkToMirik(chatId, { text, content, source = 'telegram', 
   memdb.addMessage(chatId, 'assistant', scrub(result));
   // старая переписка не выбрасывается, а сжимается в сводку
   compressHistory(chatId, async (prev, chunk) => (await chat({
-    maxTokens: 900,
     temperature: 0.2,
     agent: 'mirik',
     messages: [

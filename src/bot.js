@@ -115,16 +115,17 @@ export async function sendMedia(api, chatId, full, caption) {
 const pendingAsk = new Map(); // chatId -> { msgId, options, finish(answer) }
 const ASK_TIMEOUT = 10 * 60_000;
 
-function askOwner(api, chatId, { question, options = [], n, total, cancelled }) {
+// title/skipLabel/skipNote/timeoutNote/timeoutMs — для вопросов не от Мирика-уточнителя (например, «продлить лимит?»)
+function askOwner(api, chatId, { question, options = [], n, total, cancelled, title, skipLabel = '🤷 Решай сам', skipNote = '🤷 Мирик решит сам', timeoutNote = '⌛ Без ответа — Мирик решит сам', timeoutMs = ASK_TIMEOUT }) {
   const kb = new InlineKeyboard();
   options.slice(0, 4).forEach((o, i) => kb.text(String(o).slice(0, 60), `ans:${i}`).row());
-  kb.text('🤷 Решай сам', 'ans:skip');
+  kb.text(skipLabel, 'ans:skip');
   const hint = options.length ? 'Выбери вариант или напиши свой ответ.' : 'Напиши ответ (можно голосовым).';
   return new Promise(async (resolve) => {
     pendingAsk.get(chatId)?.finish(null); // старый вопрос в этом чате больше не ждём
     let msg;
     try {
-      msg = await api.sendMessage(chatId, `❓ Мирик уточняет${total > 1 ? ` (${n}/${total})` : ''}:
+      msg = await api.sendMessage(chatId, `${title || `❓ Мирик уточняет${total > 1 ? ` (${n}/${total})` : ''}`}:
 ${question}
 
 ${hint}`, { reply_markup: kb });
@@ -134,10 +135,10 @@ ${hint}`, { reply_markup: kb });
       if (pendingAsk.get(chatId)?.msgId === msg.message_id) pendingAsk.delete(chatId);
       api.editMessageText(chatId, msg.message_id, `❓ ${question}
 
-${note || (answer ? '✅ ' + answer.slice(0, 500) : '🤷 Мирик решит сам')}`).catch(() => {});
+${note || (answer ? '✅ ' + answer.slice(0, 500) : skipNote)}`).catch(() => {});
       resolve(answer);
     };
-    const timer = setTimeout(() => done(null, '⌛ Без ответа — Мирик решит сам'), ASK_TIMEOUT);
+    const timer = setTimeout(() => done(null, timeoutNote), timeoutMs);
     const watch = setInterval(() => cancelled?.() && done(null, '⛔ Задача остановлена'), 1000);
     pendingAsk.set(chatId, { msgId: msg.message_id, options, finish: done });
   });
