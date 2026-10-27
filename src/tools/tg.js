@@ -1,6 +1,8 @@
 // Чтение переписок из аккаунта владельца — только Мирику и только по заданиям самого владельца
 import { findChats, readChat } from '../tguser.js';
 import { chat } from '../llm.js';
+import { config } from '../config.js';
+import { upsertPerson, listPeople, deletePerson } from '../memdb.js';
 
 // задания от Сани приходят с чужими сообщениями — им доступ к переписке не даём
 function guard(ctx) {
@@ -104,6 +106,46 @@ export const tgTools = [
       const head = `Чат «${r.name}»: всего сообщений ${r.count}, изучено частей ${done} из ${parts.length}` +
         (done < parts.length ? ' (остановлено: лимит токенов — более старые части не прочитаны)' : '') + `. ${WARN}`;
       return `${head}\n<<<ВЫПИСКИ\n${text || 'По вопросу в переписке ничего не нашлось'}\nВЫПИСКИ>>>`;
+    },
+  },
+  {
+    name: 'network_add',
+    description: 'Занести человека в «Сеть» владельца (страница-доска людей вокруг него) или обновить его карточку. Только когда владелец сам просит «занеси в сеть». Заносится ТОЛЬКО отношение человека к владельцу: оценка 1–10 и описание отношения — без пересказа и цитат переписки.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Как владелец называет человека (имя, можно с фамилией)' },
+        score: { type: 'integer', description: 'Насколько хорошо человек относится к владельцу: 1 — враждебно/использует, 5 — нейтрально, 10 — очень тепло, надёжно' },
+        relation: { type: 'string', description: 'Какое у человека отношение к владельцу: 1–3 предложения выводами (уважает, тянется, держит дистанцию, использует, ревнует…) — без цитат и личных подробностей' },
+        role: { type: 'string', description: 'Кто он владельцу, 1–3 слова: друг, одногруппница, коллега, мама…' },
+        knows: { type: 'array', items: { type: 'string' }, description: 'Имена людей из сети, с которыми он связан (если это видно) — для линий на доске' },
+      },
+      required: ['name', 'score', 'relation'],
+    },
+    async run(args, ctx) {
+      guard(ctx);
+      const r = upsertPerson(args);
+      const page = config.publicUrl ? ` Сеть: ${config.publicUrl}/net` : '';
+      return (r.updated ? `Обновил в сети: ${args.name} — ${args.score}/10 (было ${r.prev}/10).` : `Занёс в сеть: ${args.name} — ${args.score}/10.`) + page;
+    },
+  },
+  {
+    name: 'network_list',
+    description: 'Кто уже есть в «Сети» владельца: имя, роль, оценка, отношение. Смотри перед network_add, чтобы не завести одного человека дважды под разными именами.',
+    parameters: { type: 'object', properties: {} },
+    async run(_, ctx) {
+      guard(ctx);
+      const list = listPeople();
+      return list.length ? list.map((p) => `${p.name}${p.role ? ` (${p.role})` : ''} — ${p.score}/10: ${p.relation}`).join('\n') : 'Сеть пока пустая';
+    },
+  },
+  {
+    name: 'network_remove',
+    description: 'Убрать человека из «Сети» — только по просьбе владельца.',
+    parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+    async run({ name }, ctx) {
+      guard(ctx);
+      return deletePerson(name) ? `Убрал из сети: ${name}` : `В сети нет «${name}» — посмотри network_list`;
     },
   },
 ];

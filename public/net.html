@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Сеть — люди вокруг</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="net.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <a class="back" href="/" title="В офис">←</a>
+    <div class="title"><b>🕸 Сеть</b><small id="sub">люди вокруг тебя</small></div>
+    <label class="search"><input id="q" type="search" placeholder="Найти человека" autocomplete="off" /></label>
+    <div class="chips" id="chips">
+      <button data-f="all" class="on">Все</button>
+      <button data-f="warm">Близкие <i class="dot warm"></i></button>
+      <button data-f="mid">Ровные <i class="dot mid"></i></button>
+      <button data-f="cold">Холодные <i class="dot cold"></i></button>
+    </div>
+    <button class="icon" id="listBtn" title="Список">☰</button>
+    <button class="icon" id="fit" title="Показать всех">⤢</button>
+    <button class="icon" id="theme" title="Тема">◐</button>
+  </header>
+
+  <main class="board" id="board">
+    <svg id="svg" aria-label="Доска связей">
+      <g id="world"><g id="edges"></g><g id="nodes"></g></g>
+    </svg>
+    <div class="empty hidden" id="empty">
+      <div class="empty-orb">Я</div>
+      <h2>Сеть пока пустая</h2>
+      <p>Попроси Мирика разобрать переписку — «изучи всю переписку с Аней», — а потом скажи <b>«занеси в сеть»</b>.<br>Сюда попадёт только оценка и то, как человек к тебе относится.</p>
+    </div>
+    <div class="legend">
+      <span><i class="ln warm"></i>тепло 8–10</span>
+      <span><i class="ln mid"></i>ровно 5–7</span>
+      <span><i class="ln cold"></i>холодно 1–4</span>
+      <span><i class="ln knows"></i>знакомы между собой</span>
+    </div>
+  </main>
+
+  <aside class="list hidden" id="list"></aside>
+  <aside class="card hidden" id="card" aria-label="Человек"></aside>
+  <script type="module" src="net.js"></script>
+</body>
+</html>

@@ -15,6 +15,7 @@ import { usageReport, watchBalance } from './billing.js';
 import { setSecret } from './secrets.js';
 import { overview as vcOverview, sectorFacts, ideaDetail, allFacts } from './vcbase.js';
 import { wsPath } from './tools/files.js';
+import { listPeople, deletePerson } from './memdb.js';
 import fsSync from 'node:fs';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
@@ -68,6 +69,7 @@ export function startServer() {
 
   app.get('/health', (_, res) => res.send('ok'));
   app.get('/base', (_, res) => res.sendFile(path.resolve('public/base.html'), { headers: { 'Cache-Control': 'no-cache' } }));
+  app.get('/net', (_, res) => res.sendFile(path.resolve('public/net.html'), { headers: { 'Cache-Control': 'no-cache' } }));
 
   app.post('/api/login', (req, res) => {
     const { password, initData } = req.body || {};
@@ -152,6 +154,8 @@ export function startServer() {
   });
 
   // Скачать файл из рабочей папки; папку — zip-архивом (python3 есть в образе)
+  app.get('/api/network', (_, res) => res.json(listPeople()));
+  app.delete('/api/network/:id', (req, res) => res.json({ ok: deletePerson(Number(req.params.id)) }));
   app.get('/api/download', (req, res) => {
     let full;
     try { full = wsPath(String(req.query.path || '')); } catch (e) { return res.status(400).json({ error: e.message }); }

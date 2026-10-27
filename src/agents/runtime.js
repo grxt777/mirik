@@ -383,6 +383,9 @@ function activityLabel(name, args) {
     case 'send_file': return 'отправляет файл';
     case 'tg_find_chat': return 'ищет чат в Telegram';
     case 'tg_read_chat': return `читает переписку ${short(args.chat, 30)}`;
+    case 'network_add': return `заносит в сеть: ${short(args.name, 30)}`;
+    case 'network_list': return 'смотрит сеть';
+    case 'network_remove': return `убирает из сети: ${short(args.name, 30)}`;
     case 'tg_study_chat': return `изучает всю переписку ${short(args.chat, 30)}`;
     case 'remember': return 'записывает в блокнот';
     default: return name;

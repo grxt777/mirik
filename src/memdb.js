@@ -22,6 +22,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, chat_id TEXT, role TEXT, content TEXT, t INTEGER);
   CREATE INDEX IF NOT EXISTS messages_chat ON messages(chat_id, id);
   CREATE TABLE IF NOT EXISTS chats (chat_id TEXT PRIMARY KEY, summary TEXT DEFAULT '', summarized_upto INTEGER DEFAULT 0, reset_upto INTEGER DEFAULT 0);
+  CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, key TEXT UNIQUE, name TEXT, role TEXT DEFAULT '', score INTEGER, relation TEXT, knows TEXT DEFAULT '[]', history TEXT DEFAULT '[]', created_at INTEGER, updated_at INTEGER);
   CREATE VIRTUAL TABLE IF NOT EXISTS mem_fts USING fts5(kind UNINDEXED, ref UNINDEXED, body, tokenize = 'unicode61 remove_diacritics 2');
 `);
 
@@ -87,6 +88,39 @@ export function pendingForSummary(chatId, threshold = 40, keep = 20) {
 export function setSummary(chatId, text, upto) {
   chatRow(chatId);
   q('UPDATE chats SET summary = ?, summarized_upto = ? WHERE chat_id = ?').run(text, upto, chatKey(chatId));
+}
+
+// ---------- сеть: люди вокруг владельца и их отношение к нему ----------
+const personKey = (name) => String(name || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+const personOut = (p) => p && { ...p, knows: JSON.parse(p.knows || '[]'), history: JSON.parse(p.history || '[]') };
+
+// повторный занос того же человека обновляет оценку и отношение (имя остаётся как при первом заносе); прошлые оценки — в истории
+export function upsertPerson({ name, score, relation, role, knows }) {
+  name = String(name || '').trim().slice(0, 80);
+  const key = personKey(name);
+  if (!key) throw new Error('Не указано имя');
+  score = Math.round(Number(score));
+  if (!(score >= 1 && score <= 10)) throw new Error('Оценка — целое от 1 до 10');
+  relation = String(relation || '').trim().slice(0, 1200);
+  if (!relation) throw new Error('Не описано отношение');
+  const now = Date.now();
+  const old = personOut(q('SELECT * FROM people WHERE key = ?').get(key));
+  const links = [...new Set([...(old?.knows || []), ...(Array.isArray(knows) ? knows : [])].map((n) => String(n).trim().slice(0, 80)).filter((n) => n && personKey(n) !== key))].slice(0, 40);
+  const history = [...(old?.history || []), { t: now, score }].slice(-30);
+  if (old) {
+    q('UPDATE people SET name = ?, role = ?, score = ?, relation = ?, knows = ?, history = ?, updated_at = ? WHERE id = ?')
+      .run(old.name, String(role ?? old.role ?? '').trim().slice(0, 80), score, relation, JSON.stringify(links), JSON.stringify(history), now, old.id);
+    return { id: old.id, updated: true, prev: old.score };
+  }
+  const { lastInsertRowid: id } = q('INSERT INTO people(key, name, role, score, relation, knows, history, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(key, name, String(role || '').trim().slice(0, 80), score, relation, JSON.stringify(links), JSON.stringify(history), now, now);
+  return { id: Number(id), updated: false };
+}
+export const listPeople = () => q('SELECT * FROM people ORDER BY score DESC, name').all().map(personOut);
+export const getPerson = (name) => personOut(q('SELECT * FROM people WHERE key = ?').get(personKey(name)));
+export function deletePerson(idOrName) {
+  const r = typeof idOrName === 'number' ? q('DELETE FROM people WHERE id = ?').run(idOrName) : q('DELETE FROM people WHERE key = ?').run(personKey(idOrName));
+  return r.changes > 0;
 }
 
 // ---------- поиск ----------

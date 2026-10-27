@@ -72,7 +72,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
     await login({ password: $('#password').value });
-    if (new URLSearchParams(location.search).get('next') === 'base') { location.href = '/base'; return; }
+    { const next = new URLSearchParams(location.search).get('next'); if (next === 'base' || next === 'net') { location.href = '/' + next; return; } }
     $('#login').classList.add('hidden');
     connect();
     loadUsage();
