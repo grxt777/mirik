@@ -85,11 +85,12 @@ export async function logout() {
 }
 
 // ---------- клиент: подключаемся по требованию, отключаемся после простоя ----------
-let client = null, idle = null;
+let client = null, idle = null, busy = 0;
 
+// destroy, а не disconnect: иначе цикл обновлений GramJS остаётся жить и сыплет TIMEOUT в лог
 function closeClient() {
   clearTimeout(idle);
-  client?.disconnect().catch(() => {});
+  client?.destroy().catch(() => {});
   client = null;
 }
 
@@ -100,8 +101,9 @@ async function withClient(fn) {
     client = makeClient(session);
     await client.connect();
   }
+  // простой считается с конца последнего запроса: долгое чтение истории не должно обрываться посередине
   clearTimeout(idle);
-  idle = setTimeout(closeClient, IDLE_MS);
+  busy++;
   try { return await fn(client); } catch (e) {
     if (/AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED/.test(e.errorMessage || e.message)) {
       closeClient();
@@ -109,6 +111,8 @@ async function withClient(fn) {
       throw new Error('Сессия Telegram отозвана — нужно заново войти: /tg_login');
     }
     throw e;
+  } finally {
+    if (--busy === 0 && client) idle = setTimeout(closeClient, IDLE_MS);
   }
 }
 
@@ -170,16 +174,29 @@ function media(m) {
 }
 
 // all — вся история без лимита (для tg_study_chat: целиком в модель она не идёт, только по частям)
-export async function readChat(chat, { limit = 100, days, search, all } = {}) {
+// onProgress(n) — сколько уже скачано; если Telegram молчит дольше STALL_MS — ошибка, а не вечное ожидание
+const STALL_MS = 3 * 60_000;
+export async function readChat(chat, { limit = 100, days, search, all, onProgress } = {}) {
   return withClient(async (c) => {
     const entity = await resolve(c, chat);
     const max = all ? undefined : Math.min(Math.max(Number(limit) || 100, 1), 500);
     const since = days ? Date.now() / 1000 - Number(days) * 86400 : 0;
     const msgs = [];
-    for await (const m of c.iterMessages(entity, { limit: max, search: search || undefined })) {
-      if (since && m.date < since) break;
-      msgs.push(m);
-    }
+    const it = c.iterMessages(entity, { limit: max, search: search || undefined })[Symbol.asyncIterator]();
+    let timer;
+    const stall = () => new Promise((_, no) => { timer = setTimeout(() => no(new Error(`Telegram не отвечает больше ${STALL_MS / 60_000} мин — скачано ${msgs.length} сообщений, попробуй позже`)), STALL_MS); });
+    try {
+      for (;;) {
+        const { value: m, done } = await Promise.race([it.next(), stall()]);
+        clearTimeout(timer);
+        if (done || (since && m.date < since)) break;
+        msgs.push(m);
+        if (msgs.length % 2000 === 0) onProgress?.(msgs.length);
+      }
+    } catch (e) {
+      closeClient(); // соединение могло залипнуть — следующий запрос подключится заново
+      throw e;
+    } finally { clearTimeout(timer); }
     const lines = msgs.reverse().map((m) => {
       if (m.action) return `[${when(m.date)}] · служебное: ${m.action.className.replace('MessageAction', '')}`;
       const who = m.out ? 'Я (владелец)' : nameOf(m.sender);

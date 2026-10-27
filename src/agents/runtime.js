@@ -457,6 +457,8 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
   if (ctx.node && ctx.delegated) ctx.node.current.push(node);
   else if (!ctx.node) roots.set(ctx.taskId, node);
   const actx = { ...ctx, agentId, node, delegated: false };
+  // долгие инструменты (tg_study_chat) показывают, где они сейчас — в панели и в сообщении-прогрессе в Telegram
+  actx.progress = (text) => taskStep(ctx.task, agentId, text);
   // для инструментов, которые сами зовут модель (tg_study_chat): тратят из общего бюджета задачи
   actx.spendTokens = async (n) => {
     budget.tokens += n || 0;
