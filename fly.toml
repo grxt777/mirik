@@ -1,5 +1,6 @@
 app = "mirik-hq"
 primary_region = "fra"
+swap_size_mb = 512
 
 [build]
 
