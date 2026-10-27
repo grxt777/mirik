@@ -257,12 +257,29 @@ function taskButtons(t, withOpen) {
     const pr = t.status === 'paused' ? `<button class="go" data-act="resume" data-id="${t.id}">▶ Продолжить</button>` : `<button data-act="pause" data-id="${t.id}">⏸ Пауза</button>`;
     return `${pr}<button class="stop" data-act="cancel" data-id="${t.id}">⛔ Отменить</button>${open}`;
   }
-  return `<button data-act="retry" data-id="${t.id}">↻ Повторить</button>${open}<button data-act="copy" data-id="${t.id}">📋 Копировать</button>`;
+  const dl = projectDirs(t.result).map((p) => `<button data-act="download" data-id="${t.id}" data-path="${esc(p)}">📦 ${esc(p.split('/').pop())}.zip</button>`).join('');
+  return `<button data-act="retry" data-id="${t.id}">↻ Повторить</button>${open}<button data-act="copy" data-id="${t.id}">📋 Копировать</button>${dl}`;
+}
+
+// Папки проектов, упомянутые в итоге: projects/<имя>/ (без vc-мнений — это не наработки)
+const projectDirs = (text) => [...new Set([...String(text || '').matchAll(/projects\/([\w.-]+)/g)].map((m) => 'projects/' + m[1]))].filter((p) => p !== 'projects/vc');
+
+async function download(p, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/download?path=' + encodeURIComponent(p), { headers: { 'x-token': token || '' } });
+    if (res.status === 401) return showLogin();
+    if (!res.ok) return toast((await res.json().catch(() => ({}))).error || 'Не скачалось', true);
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await res.blob()), download: p.split('/').pop() + '.zip' });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  } finally { if (btn) btn.disabled = false; }
 }
 
 async function taskAction(act, id, btn) {
   const t = state.tasks.get(id);
   if (!t) return;
+  if (act === 'download') return download(btn.dataset.path, btn);
   if (act === 'copy') { await navigator.clipboard?.writeText(t.result || ''); toast('Скопировано'); return; }
   if (act === 'retry') { closePopup(); switchTab('chat'); await send(t.text, t.agent); return; }
   if (act === 'open') { closePopup(); openInChat(id); return; }

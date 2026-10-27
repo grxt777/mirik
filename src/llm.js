@@ -28,7 +28,7 @@ function recordUsage(u, agent) {
 // оставляет пустой ответ. Лимит — только потолок, платим за то, что реально сгенерировано.
 // reasoning: без параметра GLM думает в полную силу; { effort: 'low' } почти выключает размышления
 // (даже 'high' думает в разы меньше умолчания) — только для механической работы.
-export async function chat({ messages, tools, temperature = 0.4, maxTokens = 8000, agent, reasoning }) {
+export async function chat({ messages, tools, temperature = 0.4, maxTokens = 16000, agent, reasoning }) {
   // та же модель, но у самого дешёвого провайдера; если он недоступен, OpenRouter возьмёт следующий по цене
   const body = { model: config.model, messages, temperature, max_tokens: maxTokens, provider: { sort: 'price' } };
   if (tools?.length) body.tools = tools;
@@ -51,7 +51,7 @@ export async function chat({ messages, tools, temperature = 0.4, maxTokens = 800
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error?.message || `HTTP ${res.status}`);
       if (data.usage) recordUsage(data.usage, agent);
-      return Object.assign(data.choices[0].message, { _usage: data.usage });
+      return Object.assign(data.choices[0].message, { _usage: data.usage, _finish: data.choices[0].finish_reason });
     } catch (e) {
       lastErr = e;
       await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));

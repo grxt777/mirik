@@ -10,6 +10,7 @@ import { fileTools } from '../tools/files.js';
 import { browserTools, inspectTools, closeTaskPage } from '../tools/browser.js';
 import { docTools } from '../tools/docs.js';
 import { vcTools } from '../tools/vc.js';
+import { tgTools } from '../tools/tg.js';
 import { lookup as vcLookup, formatLookup as vcFormat, autoRecord as vcAutoRecord } from '../vcbase.js';
 import { wsPath } from '../tools/files.js';
 import { scrub, scrubAll, addJournal, recallFor, officeState, compressHistory } from '../memory.js';
@@ -351,7 +352,7 @@ const builtinTools = [
   },
 ];
 
-const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...inspectTools, ...docTools, ...vcTools].map((t) => [t.name, t]));
+const TOOLS = Object.fromEntries([...builtinTools, ...webTools, ...fileTools, ...browserTools, ...inspectTools, ...docTools, ...vcTools, ...tgTools].map((t) => [t.name, t]));
 
 const toolSchema = (t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } });
 
@@ -380,6 +381,9 @@ function activityLabel(name, args) {
     case 'ask_sanya': return 'пишет Сане';
     case 'ask_owner': return 'уточняет у владельца';
     case 'send_file': return 'отправляет файл';
+    case 'tg_find_chat': return 'ищет чат в Telegram';
+    case 'tg_read_chat': return `читает переписку ${short(args.chat, 30)}`;
+    case 'tg_study_chat': return `изучает всю переписку ${short(args.chat, 30)}`;
     case 'remember': return 'записывает в блокнот';
     default: return name;
   }
@@ -450,6 +454,11 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
   if (ctx.node && ctx.delegated) ctx.node.current.push(node);
   else if (!ctx.node) roots.set(ctx.taskId, node);
   const actx = { ...ctx, agentId, node, delegated: false };
+  // для инструментов, которые сами зовут модель (tg_study_chat): тратят из общего бюджета задачи
+  actx.spendTokens = async (n) => {
+    budget.tokens += n || 0;
+    return budget.tokens <= (budget.limit || TASK_TOKEN_BUDGET) || extendTokens(actx, agentId);
+  };
 
   setState(agentId, { status: 'thinking', activity: 'думает…', taskId: ctx.taskId });
   let nudges = 0, lastKey = '', repeats = 0, limit = maxSteps;
@@ -477,7 +486,8 @@ export async function runAgent({ agentId, input, history = [], ctx }) {
       if (!calls.length) {
         const text = (msg.content || '').trim();
         // пустой ответ — не «готово»; описал намерение вместо работы; венчурщик не сохранил мнение — возвращаем к делу
-        const why = !text ? 'Твой ответ пустой. Сделай работу инструментами и дай отчёт с результатом.'
+        const why = msg._finish === 'length' ? 'Твой ответ обрезался по лимиту длины — вызов инструмента потерялся. Пиши крупные файлы частями: сначала каркас через write_file, потом дописывай кусками (run_code с >>) — каждый кусок не больше ~300 строк.'
+          : !text ? 'Твой ответ пустой. Сделай работу инструментами и дай отчёт с результатом.'
           : looksLikeIntent(text) ? 'Ты описал, что собираешься сделать, но не сделал. Выполни это прямо сейчас инструментами (без «сейчас соберу/начинаю»), и только потом дай отчёт с результатом.'
           : agent.dept === 'vc' && !actx.opinionSaved && /projects\/vc\//.test(String(input)) ? 'Ты не сохранил своё мнение в файл projects/vc/<имя>/opinions/' + agentId + '.md (папку назвали в задании). Сохрани его сейчас через write_file — с «Оценка: X/10» и «Вердикт:» — и потом дай отчёт.'
           : null;

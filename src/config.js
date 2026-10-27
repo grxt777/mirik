@@ -14,6 +14,9 @@ export const config = {
   // Прямой канал с Саней (личный ассистент владельца, отдельное приложение): общий токен и его адрес
   linkToken: env.AGENT_LINK_TOKEN || '',
   sanyaUrl: (env.SANYA_URL || '').replace(/\/$/, ''),
+  // Чтение переписок аккаунта владельца (MTProto): ключи приложения с my.telegram.org
+  tgApiId: Number(env.TG_API_ID || 0),
+  tgApiHash: env.TG_API_HASH || '',
 };
 
 config.workspaceDir = path.join(config.dataDir, 'workspace');

@@ -14,6 +14,7 @@ import { usageReport } from './billing.js';
 import { setSecret, deleteSecret, secretNames } from './secrets.js';
 import { overview as vcOverview, lookup as vcLookup, formatLookup as vcFormat } from './vcbase.js';
 import * as chatlog from './chatlog.js';
+import * as tguser from './tguser.js';
 
 export let bot = null;
 
@@ -391,7 +392,7 @@ export function startBot() {
 
   bot.command('start', (ctx) =>
     ctx.reply(
-      `Привет! Я Мирик 👑 — старший ИИ-агент.\nМоя команда:\n🏢 Операционный — программист, исследователь, оператор браузера и отличница.\n💻 IT-департамент — CTO, дизайнер, два бэкендера, фронтендер и QA: сайты, приложения и боты под ключ.\n💼 StartupBase — аналитики, клиент, юрист и инвестор: каждый даёт своё мнение об идее.\n\nПросто напиши задание — я раздам его своим и пришлю результат. Например: «сделайте лендинг для кофейни».\nЕсли без уточнений не обойтись — я спрошу (до 5 вопросов, с вариантами ответа).\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
+      `Привет! Я Мирик 👑 — старший ИИ-агент.\nМоя команда:\n🏢 Операционный — программист, исследователь, оператор браузера и отличница.\n💻 IT-департамент — CTO, дизайнер, два бэкендера, фронтендер и QA: сайты, приложения и боты под ключ.\n💼 StartupBase — аналитики, клиент, юрист и инвестор: каждый даёт своё мнение об идее.\n\nПросто напиши задание — я раздам его своим и пришлю результат. Например: «сделайте лендинг для кофейни».\nЕсли без уточнений не обойтись — я спрошу (до 5 вопросов, с вариантами ответа).\nМожно кидать фото, файлы и голосовые 🎙 (их расшифровывает Саня).\n\nКоманды:\n/team — команда\n/tasks — задания\n/stop — остановить всё\n/secret имя значение — сохранить логин/пароль для сайтов\n/secrets — список секретов\n/tg_login — дать доступ к чтению моих переписок, /tg_logout — забрать\n/memory — что я о тебе помню\n/files — рабочая папка, /get путь — скачать файл\n/reset — забыть текущий диалог\n/stats — статистика\n/balance — баланс OpenRouter и расход токенов`,
       { reply_markup: officeKeyboard() }
     )
   );
@@ -464,6 +465,41 @@ export function startBot() {
   bot.command('delsecret', (ctx) => {
     deleteSecret(ctx.match.trim());
     return ctx.reply('Удалено');
+  });
+
+  // Вход в Telegram-аккаунт владельца (чтение переписок). Только в личке; код и пароль удаляем сразу.
+  const tgErr = (ctx, e) => ctx.reply('❌ ' + (e.errorMessage || e.message));
+  const privateOnly = (ctx) => ctx.chat.type === 'private' || (ctx.deleteMessage().catch(() => {}), ctx.reply('Только в личке со мной'), false);
+  bot.command('tg_login', async (ctx) => {
+    if (!privateOnly(ctx)) return;
+    const phone = ctx.match.replace(/[^\d+]/g, '');
+    await ctx.deleteMessage().catch(() => {});
+    if (!phone) return ctx.reply(`Формат: /tg_login +998901234567\n${tguser.tgLoggedIn() ? 'Аккаунт уже подключён. ' : ''}Мирик сможет только ЧИТАТЬ переписки, которые ты назовёшь в задании.`);
+    try { await tguser.startLogin(phone); } catch (e) { return tgErr(ctx, e); }
+    return ctx.reply('📨 Telegram прислал код. Отправь его С ПРОБЕЛАМИ между цифрами — иначе Telegram заблокирует вход:\n/tg_code 1 2 3 4 5');
+  });
+  bot.command('tg_code', async (ctx) => {
+    if (!privateOnly(ctx)) return;
+    const code = ctx.match.replace(/\D/g, '');
+    await ctx.deleteMessage().catch(() => {});
+    try {
+      const r = await tguser.submitCode(code);
+      if (r.needPassword) return ctx.reply('🔑 Включена двухэтапная проверка — пришли облачный пароль: /tg_password пароль\n(сообщение сразу удалю)');
+      return ctx.reply(`✅ Вошёл как ${r.name}. Теперь можно писать: «прочитай переписку с …». Выйти: /tg_logout`);
+    } catch (e) { return tgErr(ctx, e); }
+  });
+  bot.command('tg_password', async (ctx) => {
+    if (!privateOnly(ctx)) return;
+    const pwd = ctx.match.trim();
+    await ctx.deleteMessage().catch(() => {});
+    try {
+      const r = await tguser.submitPassword(pwd);
+      return ctx.reply(`✅ Вошёл как ${r.name}. Теперь можно писать: «прочитай переписку с …». Выйти: /tg_logout`);
+    } catch (e) { return tgErr(ctx, e); }
+  });
+  bot.command('tg_logout', async (ctx) => {
+    await tguser.logout().catch(() => {});
+    return ctx.reply('🚪 Сессия завершена и удалена. Мирик больше не видит твои переписки.');
   });
 
   bot.command('files', async (ctx) => {
@@ -563,6 +599,8 @@ export function startBot() {
     { command: 'stop', description: 'Остановить все задания' },
     { command: 'secret', description: 'Сохранить логин/пароль' },
     { command: 'secrets', description: 'Список секретов' },
+    { command: 'tg_login', description: 'Доступ к чтению моих переписок' },
+    { command: 'tg_logout', description: 'Забрать доступ к перепискам' },
     { command: 'memory', description: 'Что Мирик помнит' },
     { command: 'files', description: 'Рабочая папка' },
     { command: 'reset', description: 'Забыть диалог' },

@@ -16,6 +16,8 @@ import { setSecret } from './secrets.js';
 import { overview as vcOverview, sectorFacts, ideaDetail, allFacts } from './vcbase.js';
 import { wsPath } from './tools/files.js';
 import fsSync from 'node:fs';
+import os from 'node:os';
+import { execFile } from 'node:child_process';
 
 const SESSION = crypto.createHash('sha256').update('mirik:' + config.adminPassword + ':' + config.botToken).digest('hex');
 const authed = (token) => typeof token === 'string' && token.length === SESSION.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(SESSION));
@@ -149,6 +151,18 @@ export function startServer() {
     d ? res.json(d) : res.status(404).json({ error: 'нет такой идеи' });
   });
 
+  // Скачать файл из рабочей папки; папку — zip-архивом (python3 есть в образе)
+  app.get('/api/download', (req, res) => {
+    let full;
+    try { full = wsPath(String(req.query.path || '')); } catch (e) { return res.status(400).json({ error: e.message }); }
+    if (!fsSync.existsSync(full)) return res.status(404).json({ error: 'Нет такого файла' });
+    if (!fsSync.statSync(full).isDirectory()) return res.download(full);
+    const zip = path.join(os.tmpdir(), `dl-${crypto.randomUUID()}.zip`);
+    execFile('python3', ['-m', 'zipfile', '-c', zip, full], { timeout: 120_000 }, (err) => {
+      if (err) return res.status(500).json({ error: 'Не удалось собрать архив' });
+      res.download(zip, path.basename(full) + '.zip', () => fsSync.rm(zip, { force: true }, () => {}));
+    });
+  });
   app.post('/api/tasks/:id/cancel', (req, res) => res.json({ ok: cancelTask(req.params.id) }));
   app.post('/api/tasks/:id/pause', (req, res) => res.json({ ok: pauseTask(req.params.id) }));
   app.post('/api/tasks/:id/resume', (req, res) => res.json({ ok: resumeTask(req.params.id) }));
